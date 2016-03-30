@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>jQuery UI Accordion - Default functionality</title>
+  <link rel="stylesheet" href="embedded:html/jquery-ui.css">
+  <script src="embedded:html/jquery.js"></script>
+  <script src="embedded:html/jquery-ui.js"></script>
+  <link rel="stylesheet" href="embedded:html/style.css">
+  <script>
+  $(function() {
+    $( "#accordion" ).accordion();
+    $( "#datepicker" ).datepicker();
+    $( "#menu" ).menu();
+    $( "#addListItem" ).click(function() {
+        if (typeof napp != "undefined") {
+//          napp.send(val);
+        }
+    });
+    var spinner = $( "#spinner" ).spinner();
+
+    $( "#disable" ).click(function() {
+      if ( spinner.spinner( "option", "disabled" ) ) {
+        spinner.spinner( "enable" );
+      } else {
+        spinner.spinner( "disable" );
+      }
+    });
+    $( "#destroy" ).click(function() {
+      if ( spinner.spinner( "instance" ) ) {
+        spinner.spinner( "destroy" );
+      } else {
+        spinner.spinner();
+      }
+    });
+    $( "#getvalue" ).click(function() {
+        var val = spinner.spinner( "value" );
+        if (typeof napp != "undefined") {
+          napp.send(val);
+        }else{
+          alert(val);
+        }
+    });
+    $( "#setvalue" ).click(function() {
+      spinner.spinner( "value", 5 );
+    });
+    $( "#tabs" ).tabs();
+    $( "button" ).button();
+  });
+  </script>
+  <style>
+  .ui-menu { width: 150px; }
+  </style>
+</head>
+<body>
+
+<div id="accordion">
+  <h3>Datetime picker</h3>
+  <div>
+    <p>
+    Mauris mauris ante, blandit et, ultrices a, suscipit eget, quam. Integer
+    ut neque. Vivamus nisi metus, molestie vel, gravida in, condimentum sit
+    amet, nunc. Nam a nibh. Donec suscipit eros. Nam mi. Proin viverra leo ut
+    odio. Curabitur malesuada. Vestibulum a velit eu ante scelerisque vulputate.
+    </p>
+    <p>Date: <input type="text" id="datepicker"></p>
+  </div>
+  <h3>Menu</h3>
+  <div>
+    <p>
+    Sed non urna. Donec et ante. Phasellus eu ligula. Vestibulum sit amet
+    purus. Vivamus hendrerit, dolor at aliquet laoreet, mauris turpis porttitor
+    velit, faucibus interdum tellus libero ac justo. Vivamus non quam. In
+    suscipit faucibus urna.
+    </p>
+
+    <ul id="menu">
+      <li class="ui-state-disabled">Aberdeen</li>
+      <li>Ada</li>
+      <li>Adamsville</li>
+      <li>Addyston</li>
+      <li>Delphi
+        <ul>
+          <li class="ui-state-disabled">Ada</li>
+          <li>Saarland</li>
+          <li>Salzburg an der schönen Donau</li>
+        </ul>
+      </li>
+      <li>Saarland</li>
+      <li>Salzburg
+        <ul>
+          <li>Delphi
+            <ul>
+              <li>Ada</li>
+              <li>Saarland</li>
+              <li>Salzburg</li>
+            </ul>
+          </li>
+          <li>Delphi
+            <ul>
+              <li>Ada</li>
+              <li>Saarland</li>
+              <li>Salzburg</li>
+            </ul>
+          </li>
+          <li>Perch</li>
+        </ul>
+      </li>
+      <li class="ui-state-disabled">Amesville</li>
+    </ul>
+
+  </div>
+  <h3>List</h3>
+  <div>
+    <p>
+    Nam enim risus, molestie et, porta ac, aliquam ac, risus. Quisque lobortis.
+    Phasellus pellentesque purus in massa. Aenean in pede. Phasellus ac libero
+    ac tellus pellentesque semper. Sed ac felis. Sed commodo, magna quis
+    lacinia ornare, quam ante aliquam nisi, eu iaculis leo purus venenatis dui.
+    </p>
+    <ul id="mylist">
+      <li>List item one</li>
+      <li>List item two</li>
+      <li>List item three</li>
+    </ul>
+    <div>
+      <button id="addListItem">Add From C++</button>
+    </div>
+  </div>
+  <h3>Spinner</h3>
+  <div>
+    <p>
+    Cras dictum. Pellentesque habitant morbi tristique senectus et netus
+    et malesuada fames ac turpis egestas. Vestibulum ante ipsum primis in
+    faucibus orci luctus et ultrices posuere cubilia Curae; Aenean lacinia
+    mauris vel est.
+    </p>
+    <p>
+    Suspendisse eu nisl. Nullam ut libero. Integer dignissim consequat lectus.
+    Class aptent taciti sociosqu ad litora torquent per conubia nostra, per
+    inceptos himenaeos.
+    </p>
+    <p>
+      <label for="spinner">Select a value:</label>
+      <input id="spinner" name="value">
+    </p>
+
+    <p>
+      <button id="disable">Toggle disable/enable</button>
+      <button id="destroy">Toggle widget</button>
+    </p>
+
+    <p>
+      <button id="getvalue">Get value</button>
+      <button id="setvalue">Set value to 5</button>
+    </p>
+
+  </div>
+</div>
+
+
+</body>
+</html>

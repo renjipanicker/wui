@@ -1,0 +1,36 @@
+DIR=$(dirname "$0")
+ROOT_REL=$DIR/../..
+ROOT=`cd "$ROOT_REL"; pwd`
+
+SRC=$ROOT/src/
+DEMO=$ROOT/sample/
+BLD=$DEMO/bld
+echo root is:$ROOT
+
+clang++ -std=c++11 -o $BLD/packer $SRC/packer.cpp
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+
+$BLD/packer -d $BLD -v html -p html/ $DEMO/src/jquery-ui.css $DEMO/src/jquery-ui.js $DEMO/src/jquery.js $DEMO/src/style.css $DEMO/src/index.html
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+
+mkdir -p $BLD/qaddy.app/Contents/MacOS
+clang++ \
+  -DNO_NIB=1 \
+  -o $BLD/qaddy.app/Contents/MacOS/qaddy \
+  -ObjC++ --std=c++14 -fobjc-arc \
+  -I$SRC \
+  -I$BLD \
+  -framework Cocoa \
+  -framework WebKit \
+  $DEMO/src/main.cpp \
+  $SRC/wui.cpp \
+  $BLD/html.cpp
+
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+
