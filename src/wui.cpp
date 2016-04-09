@@ -41,6 +41,7 @@ namespace {
     const std::string empfx = "embedded:";
     struct ContentSourceData {
         s::wui::ContentSourceType type;
+        std::string path;
         std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> const* lst;
         inline ContentSourceData() : type(s::wui::ContentSourceType::Standard), lst(nullptr) {}
 
@@ -48,6 +49,12 @@ namespace {
         inline void setEmbeddedSource(std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> const& l) {
             type = s::wui::ContentSourceType::Embedded;
             lst = &l;
+        }
+
+        /// \brief set resource source
+        inline void setResourceSource(const std::string& p) {
+            type = s::wui::ContentSourceType::Resource;
+            path = p;
         }
 
         inline const auto& getEmbeddedSource(const std::string& url) {
@@ -90,7 +97,7 @@ inline NSString* getNSString(const std::string& str) {
 +(NSString*)webScriptNameForSelector:(SEL)sel {
     if(sel == @selector(invoke:pfn:pargs:))
         return @"invoke";
-    if(sel == @selector(error:msg:))
+    if(sel == @selector(error:))
         return @"error";
     return nil;
 }
@@ -98,7 +105,7 @@ inline NSString* getNSString(const std::string& str) {
 + (BOOL)isSelectorExcludedFromWebScript:(SEL)sel {
     if(sel == @selector(invoke:pfn:pargs:))
         return NO;
-    if(sel == @selector(error:msg:))
+    if(sel == @selector(error:))
         return NO;
     return YES;
 }
@@ -129,6 +136,31 @@ inline NSString* getNSString(const std::string& str) {
 @end
 
 /////////////////////////////////
+@interface AppDelegate : NSObject<NSApplicationDelegate, WebFrameLoadDelegate, WebResourceLoadDelegate, WebUIDelegate, WebPolicyDelegate>{
+@public
+    s::wui::window* wb_;
+}
+@end
+
+#ifndef NO_NIB
+@interface AppDelegate ()
+@property (weak) IBOutlet NSWindow *window;
+@end
+#endif
+
+/////////////////////////////////
+@interface EmbeddedURLProtocol : NSURLProtocol {
+}
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request;
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request;
++ (BOOL)requestIsCacheEquivalent:(NSURLRequest *)a toRequest:(NSURLRequest *)b;
+- (void)startLoading;
+- (void)stopLoading;
+
+@end
+
+/////////////////////////////////
 class s::application::Impl {
     s::application& app_;
 public:
@@ -139,11 +171,13 @@ public:
     }
 
     inline int loop() {
-        if(s::app().onInit){
-            s::app().onInit();
-        }
 #ifdef NO_NIB
         NSApplication *app = [NSApplication sharedApplication];
+
+        // create AppDelegate
+        auto wd = [AppDelegate new];
+        [app setDelegate : wd];
+
         [app run];
         return 0;
 #else
@@ -172,25 +206,6 @@ public:
 };
 
 /////////////////////////////////
-@interface AppDelegate : NSObject<NSApplicationDelegate, WebFrameLoadDelegate, WebResourceLoadDelegate, WebUIDelegate, WebPolicyDelegate>{
-@public
-    s::wui::window* wb_;
-}
-@end
-
-/////////////////////////////////
-@interface EmbeddedURLProtocol : NSURLProtocol {
-}
-
-+ (BOOL)canInitWithRequest:(NSURLRequest *)request;
-+ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request;
-+ (BOOL)requestIsCacheEquivalent:(NSURLRequest *)a toRequest:(NSURLRequest *)b;
-- (void)startLoading;
-- (void)stopLoading;
-
-@end
-
-/////////////////////////////////
 class s::wui::window::Impl {
     s::wui::window& wb;
     NSWindow* window;
@@ -203,6 +218,10 @@ public:
 
     inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
         csd.setEmbeddedSource(lst);
+    }
+
+    inline void setContentSourceResource(const std::string& path) {
+        csd.setResourceSource(path);
     }
 
     inline const auto& getEmbeddedSource(const std::string& url) {
@@ -241,31 +260,33 @@ public:
         NSRect frame = NSMakeRect(100, 0, 400, 800);
         webView = [[WebView alloc] initWithFrame:frame frameName : @"myWV" groupName : @"webViews"];
 
-#if NO_NIB
-        // create AppDelegate
-        wd = [AppDelegate new];
-        [app setDelegate : wd];
-
-        // create top window
-        window = [[NSWindow alloc]
-            initWithContentRect:frame
-            styleMask : NSTitledWindowMask | NSClosableWindowMask | NSMiniaturizableWindowMask | NSResizableWindowMask
-            backing : NSBackingStoreBuffered
-            defer : NO];
-        [window setLevel:NSMainMenuWindowLevel + 1];
-        [window setOpaque:YES];
-        [window setHasShadow:YES];
-        [window setPreferredBackingLocation:NSWindowBackingLocationVideoMemory];
-        [window setHidesOnDeactivate:NO];
-        [window setBackgroundColor : [NSColor blueColor]];
-        setMenu();
-#else
         // get AppDelegate
         wd = (AppDelegate*)[app delegate];
-        assert(wd != 0);
 
         // get top-level window
-        window = [[[NSApplication sharedApplication] windows] objectAtIndex:0];
+        auto windows = [app windows];
+        assert(windows);
+        if([windows count] > 0){
+            std::cout << "ref-window" << std::endl;
+            window = [[app windows] objectAtIndex:0];
+        }else{
+            std::cout << "new-window" << std::endl;
+            // create top window
+            window = [[NSWindow alloc]
+                      initWithContentRect:frame
+                      styleMask : NSTitledWindowMask | NSClosableWindowMask | NSMiniaturizableWindowMask | NSResizableWindowMask
+                      backing : NSBackingStoreBuffered
+                      defer : NO];
+            [window setLevel:NSMainMenuWindowLevel + 1];
+            [window setOpaque:YES];
+            [window setHasShadow:YES];
+            [window setPreferredBackingLocation:NSWindowBackingLocationVideoMemory];
+            [window setHidesOnDeactivate:NO];
+            [window setBackgroundColor : [NSColor blueColor]];
+        }
+
+#ifdef NO_NIB
+        setMenu();
 #endif
 
         // bring window to front(required only when launching binary executable from command line)
@@ -296,6 +317,7 @@ public:
 
         // intialize AppDelegate
         wd->wb_ = &wb;
+        std::cout << "OPEN:" << &wd << ":" << &wb << std::endl;
 
         return true;
     }
@@ -309,9 +331,16 @@ public:
         std::cout << "LOADED:" << std::endl;
     }
 
-    inline void go(const std::string& url) {
-        std::cout << "go:" << url << std::endl;
-        NSString *pstr = getNSString(empfx + url);
+    inline void go(const std::string& surl) {
+        NSString *pstr = getNSString(surl);
+        if(csd.type == s::wui::ContentSourceType::Embedded){
+            pstr = getNSString(empfx + surl);
+        }else if(csd.type == s::wui::ContentSourceType::Resource){
+            NSString *resourcesPath = [[NSBundle mainBundle] resourcePath];
+            resourcesPath = [resourcesPath stringByAppendingString : getNSString(csd.path)];
+            pstr = [resourcesPath stringByAppendingString : pstr];
+        }
+        std::cout << "go:" << getCString(pstr) << std::endl;
         loadPage(pstr);
     }
 
@@ -328,7 +357,7 @@ public:
 @implementation EmbeddedURLProtocol
 
 +(BOOL)canInitWithRequest:(NSURLRequest *)request {
-    NSLog(@"canInit:%@", [request URL]);
+    //NSLog(@"canInit:%@", [request URL]);
     return [[[request URL] scheme] isEqualToString:@"embedded"];
 }
 
@@ -351,7 +380,6 @@ public:
     auto& data = wd->wb_->getEmbeddedSource(cpath);
 
     NSString *mimeType = getNSString(std::get<2>(data));
-    NSLog(@"EmbeddedURLProtocol:FILEPATH: %@ MIME-TYPE: %@", pathString, mimeType);
 
     NSURLResponse *response = [[NSURLResponse alloc] initWithURL:url MIMEType:mimeType expectedContentLength:-1 textEncodingName:nil];
 
@@ -377,8 +405,14 @@ public:
     } else {
         NSLog(@"URLProtocol registration failed.");
     }
+    std::cout << "ADFL:" << self << ":" << &wb_ << std::endl;
 
     // call callback
+    if(s::app().onInit){
+        s::app().onInit();
+    }
+
+    assert(wb_);
     if (wb_->onOpen) {
         wb_->onOpen();
     }
@@ -388,28 +422,25 @@ public:
     return YES;
 }
 
-- (void)webView:(WebView *)sender didFinishLoadForFrame:(WebFrame *)frame {
-    if (frame == [frame findFrameNamed:@"_top"]) {
-        NSLog(@"topframe loaded");
-        if (wb_->onLoad) {
-            wb_->onLoad("");
-        }
-    }
-}
-
--(NSURLRequest*) webView:(WebView*)webview resource:(id)sender willSendRequest:(NSURLRequest*)request redirectResponse:(NSURLResponse*)redirectresponse fromDataSource:(WebDataSource*)dataSource {
-    NSString *requestPath = [[request URL] absoluteString];
-    NSLog(@"willSendRequest delegate method called:%@", requestPath);
-    return request;
+-(void)webView:(WebView *)sender runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WebFrame *)frame {
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert addButtonWithTitle:@"OK"];
+    [alert setMessageText:message];
+    [alert runModal];
 }
 
 -(void)webView:(WebView *)webView windowScriptObjectAvailable : (WebScriptObject *)wso {
     std::cout << "windowScriptObjectAvailable" << std::endl;
     WuiObjDelegate* wob = [WuiObjDelegate new];
+    assert(wb_);
     wob->wb_ = wb_;
     assert(wso != 0);
     NSString *pstr = getNSString("nproxy");
     [wso setValue : wob forKey : pstr];
+    assert(wb_);
+    if (wb_->onLoad) {
+        wb_->onLoad("");
+    }
 }
 
 @end
@@ -1674,6 +1705,10 @@ s::wui::window::~window() {
 
 void s::wui::window::setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
     return impl_->setContentSourceEmbedded(lst);
+}
+
+void s::wui::window::setContentSourceResource(const std::string& path) {
+    return impl_->setContentSourceResource(path);
 }
 
 const std::tuple<const unsigned char*, size_t, std::string>& s::wui::window::getEmbeddedSource(const std::string& url) {

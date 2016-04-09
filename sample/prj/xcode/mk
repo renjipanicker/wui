@@ -1,11 +1,13 @@
 DIR=$(dirname "$0")
-ROOT_REL=$DIR/../..
+ROOT_REL=$DIR/../../..
 ROOT=`cd "$ROOT_REL"; pwd`
 
 SRC=$ROOT/src/
 DEMO=$ROOT/sample/
 BLD=$DEMO/bld
 echo root is:$ROOT
+
+mkdir -p $BLD
 
 clang++ -std=c++11 -o $BLD/packer $SRC/packer.cpp
 if [ $? -ne 0 ]; then

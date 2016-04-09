@@ -233,6 +233,7 @@ namespace s {
 
         public:
             void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst);
+            void setContentSourceResource(const std::string& path);
             const std::tuple<const unsigned char*, size_t, std::string>& getEmbeddedSource(const std::string& url);
             bool open();
             void setMenu(const menu& m);
