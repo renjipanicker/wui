@@ -73,6 +73,9 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
         ofsrc << "/*" << s << "*/" << std::endl;
         tlen += len;
         ofsrc << std::endl;
+        if(len < 16) {
+            break;
+        }
     }
     ofsrc << "0" << std::endl;
     ofsrc << "};" << std::endl;
@@ -123,9 +126,21 @@ int main(int argc, const char* argv[]){
         return 0;
     }
 
-    std::cout << "Generating:" << ofname << std::endl;
-    std::ofstream ofhdr(ofdir + "/" + ofname + ".hpp");
-    std::ofstream ofsrc(ofdir + "/" + ofname + ".cpp");
+    auto ofhdrname = ofdir + "/" + ofname + ".hpp";
+    auto ofsrcname = ofdir + "/" + ofname + ".cpp";
+    std::cout << "Generating:" << ofhdrname << " & " << ofsrcname << std::endl;
+    std::ofstream ofhdr(ofhdrname);
+    if(!ofhdr){
+        std::cout << "unable to open:" << ofhdrname << std::endl;
+        return 1;
+    }
+
+    std::ofstream ofsrc(ofsrcname);
+    if(!ofsrc){
+        std::cout << "unable to open:" << ofsrcname << std::endl;
+        return 1;
+    }
+
     std::ostringstream vmap;
     std::ostringstream fmap;
     std::string sep = "  ";

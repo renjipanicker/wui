@@ -235,6 +235,7 @@ public:
         [NSApp setMainMenu : menubar];
         id appMenu = [NSMenu new];
         id appName = [[NSProcessInfo processInfo] processName];
+        //NSString* appTitle = getNSString(s::app().title);
 
         id aboutTitle = [@"About " stringByAppendingString:appName];
         id aboutMenuItem = [[NSMenuItem alloc] init];
@@ -357,7 +358,7 @@ public:
 @implementation EmbeddedURLProtocol
 
 +(BOOL)canInitWithRequest:(NSURLRequest *)request {
-    //NSLog(@"canInit:%@", [request URL]);
+    NSLog(@"canInit:%@", [request URL]);
     return [[[request URL] scheme] isEqualToString:@"embedded"];
 }
 
@@ -372,15 +373,16 @@ public:
 -(void)startLoading {
     NSURL *url = [[self request] URL];
     NSString *pathString = [url resourceSpecifier];
+    NSLog(@"startLoading:%@", pathString);
 
     NSApplication *app = [NSApplication sharedApplication];
     auto wd = (AppDelegate*)[app delegate];
     assert((wd != nullptr) && (wd->wb_ != nullptr));
     auto cpath = getCString(pathString);
     auto& data = wd->wb_->getEmbeddedSource(cpath);
+    std::cout << "DATA:[" << std::get<0>(data) << "]" << std::endl;
 
     NSString *mimeType = getNSString(std::get<2>(data));
-
     NSURLResponse *response = [[NSURLResponse alloc] initWithURL:url MIMEType:mimeType expectedContentLength:-1 textEncodingName:nil];
 
     [[self client] URLProtocol:self
@@ -420,6 +422,17 @@ public:
 
 -(BOOL)applicationShouldTerminateAfterLastWindowClosed : (NSApplication *)theApplication {
     return YES;
+}
+
+- (void) webView:(WebView*)webView addMessageToConsole:(NSDictionary*)message {
+	if (![message isKindOfClass:[NSDictionary class]]) {
+		return;
+	}
+
+	NSLog(@"JavaScript console: %@:%@: %@",
+		  [[message objectForKey:@"sourceURL"] lastPathComponent],	// could be nil
+		  [message objectForKey:@"lineNumber"],
+		  [message objectForKey:@"message"]);
 }
 
 -(void)webView:(WebView *)sender runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WebFrame *)frame {
