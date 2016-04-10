@@ -3,7 +3,7 @@ ROOT_REL=$DIR/../../..
 ROOT=`cd "$ROOT_REL"; pwd`
 
 SRC=$ROOT/src/
-DEMO=$ROOT/sample/
+DEMO=$ROOT/sample01_jquery/
 BLD=$DEMO/bld
 echo root is:$ROOT
 
