@@ -69,9 +69,14 @@ namespace {
     };
 }
 
+inline s::wui::window::Impl& s::wui::window::impl() {
+    return *impl_;
+}
+
 #ifdef WUI_OSX
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <objc/runtime.h>
 
 //////////////////////////
 inline std::string getCString(NSString* str) {
@@ -88,6 +93,7 @@ inline NSString* getNSString(const std::string& str) {
 ////////////////////////////////////
 @interface WuiObjDelegate : NSObject{
 @public
+    s::js::objectbase* jo_;
     s::wui::window* wb_;
 }
 @end
@@ -95,7 +101,7 @@ inline NSString* getNSString(const std::string& str) {
 @implementation WuiObjDelegate
 
 +(NSString*)webScriptNameForSelector:(SEL)sel {
-    if(sel == @selector(invoke:pfn:pargs:))
+    if(sel == @selector(invoke:pargs:))
         return @"invoke";
     if(sel == @selector(error:))
         return @"error";
@@ -103,15 +109,14 @@ inline NSString* getNSString(const std::string& str) {
 }
 
 + (BOOL)isSelectorExcludedFromWebScript:(SEL)sel {
-    if(sel == @selector(invoke:pfn:pargs:))
+    if(sel == @selector(invoke:pargs:))
         return NO;
     if(sel == @selector(error:))
         return NO;
     return YES;
 }
 
--(id)invoke:(NSString *)name pfn:(NSString*) fn pargs:(WebScriptObject *)args {
-    auto obname = getCString(name);
+-(id)invoke:(NSString *)fn pargs:(WebScriptObject *)args {
     auto fnname = getCString(fn);
     std::vector<std::string> params;
     NSUInteger cnt = [[args valueForKey:@"length"] integerValue];
@@ -124,7 +129,7 @@ inline NSString* getNSString(const std::string& str) {
         auto s = getCString(item);
         params.push_back(s);
     }
-    auto rv = wb_->invoke(obname,fnname, params);
+    auto rv = jo_->invoke(fnname, params);
     return getNSString(rv);
 }
 
@@ -157,6 +162,43 @@ inline NSString* getNSString(const std::string& str) {
 + (BOOL)requestIsCacheEquivalent:(NSURLRequest *)a toRequest:(NSURLRequest *)b;
 - (void)startLoading;
 - (void)stopLoading;
+
+@end
+
+/////////////////////////////////
+@interface NSMenuItem (Q)
+- (void)setBlockAction:(void (^)(id sender))block;
+- (void (^)(id))blockAction;
+@end
+
+static const char * const qBlockActionKey = "BlockActionKey";
+
+@implementation NSMenuItem (Q)
+
+- (void)setBlockAction:(void (^)(id))block {
+    objc_setAssociatedObject(self, qBlockActionKey, nil, OBJC_ASSOCIATION_RETAIN);
+
+    if (block == nil) {
+        [self setTarget:nil];
+        [self setAction:NULL];
+
+        return;
+    }
+
+    objc_setAssociatedObject(self, qBlockActionKey, block, OBJC_ASSOCIATION_RETAIN);
+    [self setTarget:self];
+    [self setAction:@selector(blockActionWrapper:)];
+}
+
+- (void (^)(id))blockAction {
+    return objc_getAssociatedObject(self, qBlockActionKey);
+}
+
+- (void)blockActionWrapper:(id)sender {
+    void (^block)(id) = objc_getAssociatedObject(self, qBlockActionKey);
+
+    block(sender);
+}
 
 @end
 
@@ -228,29 +270,70 @@ public:
         return csd.getEmbeddedSource(url);
     }
 
-    inline void setMenu() {
-        id menubar = [NSMenu new];
-        id appMenuItem = [NSMenuItem new];
-        [menubar addItem : appMenuItem];
-        [NSApp setMainMenu : menubar];
-        id appMenu = [NSMenu new];
+    inline NSMenuItem* createMenuItem(id menu, NSString* title, NSString* keyEq, std::function<void()> fn = std::function<void()>()) {
+        NSMenuItem* menuItem = [[NSMenuItem alloc] init];
+        [menuItem setTitle:title];
+        if(keyEq != 0){
+            [menuItem setKeyEquivalent:keyEq];
+        }
+        if(fn){
+            [menuItem setBlockAction:^(id sender) {
+                fn();
+            }];
+        }
+        [menu addItem : menuItem];
+        return menuItem;
+    }
+
+    inline NSMenu* createMenu(id menubar, NSString* title) {
+        auto menuItem = createMenuItem(menubar, title, 0);
+        NSMenu* menu = [[NSMenu alloc] initWithTitle:title];
+        [menuItem setSubmenu : menu];
+        return menu;
+    }
+
+    inline void setDefaultMenu() {
+        auto& wb = this->wb;
         id appName = [[NSProcessInfo processInfo] processName];
-        //NSString* appTitle = getNSString(s::app().title);
 
-        id aboutTitle = [@"About " stringByAppendingString:appName];
-        id aboutMenuItem = [[NSMenuItem alloc] init];
-        [aboutMenuItem setTitle:aboutTitle];
-        [appMenu addItem : aboutMenuItem];
+        NSMenu* menubar = [[NSMenu alloc] initWithTitle:@"Filex"];
+        [NSApp setMainMenu : menubar];
 
-        id quitTitle = [@"Quit " stringByAppendingString:appName];
-        id quitMenuItem = [[NSMenuItem alloc] initWithTitle:quitTitle action : @selector(terminate : ) keyEquivalent:@"q"];
-        [appMenu addItem : quitMenuItem];
+        NSMenu* appMenu = createMenu(menubar, @"<AppName>"); // OSX always uses the actual app name here
 
-        [appMenuItem setSubmenu : appMenu];
+        NSString* aboutTitle = [@"About " stringByAppendingString:appName];
+        createMenuItem(appMenu, aboutTitle, 0);
+
+        NSString* quitTitle = [@"Quit " stringByAppendingString:appName];
+        createMenuItem(appMenu, quitTitle, @"q", [](){
+            [NSApp performSelector:@selector(terminate:) withObject:nil afterDelay:0.0];
+        });
+
+
+        NSMenu* fileMenu = createMenu(menubar, @"File");
+        createMenuItem(fileMenu, @"New", @"n", [](){
+        });
+
+        createMenuItem(fileMenu, @"Open", @"o");
+        createMenuItem(fileMenu, @"Close", @"w");
+        createMenuItem(fileMenu, @"Save", @"s", [&wb](){
+            if(wb.onSaveFile){
+                wb.onSaveFile();
+            }
+        });
+
+        NSMenu* editMenu = createMenu(menubar, @"Edit");
+        createMenuItem(editMenu, @"Undo", @"z");
+        createMenuItem(editMenu, @"Redo", @"Z");
+        createMenuItem(editMenu, @"Cut", @"x");
+        createMenuItem(editMenu, @"Copy", @"c");
+        createMenuItem(editMenu, @"Paste", @"v");
+
+        NSMenu* helpMenu = createMenu(menubar, @"Help");
+        createMenuItem(helpMenu, @"Help", @"/");
     }
 
     inline void setMenu(const menu&) {
-        return setMenu();
     }
 
     inline bool open() {
@@ -268,10 +351,8 @@ public:
         auto windows = [app windows];
         assert(windows);
         if([windows count] > 0){
-            std::cout << "ref-window" << std::endl;
             window = [[app windows] objectAtIndex:0];
         }else{
-            std::cout << "new-window" << std::endl;
             // create top window
             window = [[NSWindow alloc]
                       initWithContentRect:frame
@@ -287,7 +368,7 @@ public:
         }
 
 #ifdef NO_NIB
-        setMenu();
+        setDefaultMenu();
 #endif
 
         // bring window to front(required only when launching binary executable from command line)
@@ -318,7 +399,7 @@ public:
 
         // intialize AppDelegate
         wd->wb_ = &wb;
-        std::cout << "OPEN:" << &wd << ":" << &wb << std::endl;
+        //std::cout << "OPEN:" << &wd << ":" << &wb << std::endl;
 
         return true;
     }
@@ -329,7 +410,7 @@ public:
         NSURLRequest *request = [NSURLRequest requestWithURL : url];
         assert(request != nullptr);
         [webView.mainFrame loadRequest : request];
-        std::cout << "LOADED:" << std::endl;
+        //std::cout << "LOADED:" << std::endl;
     }
 
     inline void go(const std::string& surl) {
@@ -341,8 +422,23 @@ public:
             resourcesPath = [resourcesPath stringByAppendingString : getNSString(csd.path)];
             pstr = [resourcesPath stringByAppendingString : pstr];
         }
-        std::cout << "go:" << getCString(pstr) << std::endl;
+        //std::cout << "go:" << getCString(pstr) << std::endl;
         loadPage(pstr);
+    }
+
+    inline void addNativeObject(const std::string& name, s::js::objectbase& jo, WebScriptObject* wso) {
+        WuiObjDelegate* wob = [WuiObjDelegate new];
+        wob->jo_ = &jo;
+        wob->wb_ = &wb;
+        assert(wso != 0);
+        NSString *pstr = getNSString(name);
+        [wso setValue : wob forKey : pstr];
+    }
+
+    inline void addNativeObject(const std::string& name, s::js::objectbase& jo) {
+        WebScriptObject* wso = [webView windowScriptObject];
+        assert(wso != 0);
+        return addNativeObject(name, jo, wso);
     }
 
     inline void eval(const std::string& str) {
@@ -358,7 +454,7 @@ public:
 @implementation EmbeddedURLProtocol
 
 +(BOOL)canInitWithRequest:(NSURLRequest *)request {
-    NSLog(@"canInit:%@", [request URL]);
+    //NSLog(@"canInit:%@", [request URL]);
     return [[[request URL] scheme] isEqualToString:@"embedded"];
 }
 
@@ -373,14 +469,14 @@ public:
 -(void)startLoading {
     NSURL *url = [[self request] URL];
     NSString *pathString = [url resourceSpecifier];
-    NSLog(@"startLoading:%@", pathString);
+    //NSLog(@"startLoading:%@", pathString);
 
     NSApplication *app = [NSApplication sharedApplication];
     auto wd = (AppDelegate*)[app delegate];
     assert((wd != nullptr) && (wd->wb_ != nullptr));
     auto cpath = getCString(pathString);
-    auto& data = wd->wb_->getEmbeddedSource(cpath);
-    std::cout << "DATA:[" << std::get<0>(data) << "]" << std::endl;
+    auto& data = wd->wb_->impl().getEmbeddedSource(cpath);
+//    std::cout << "DATA:[" << std::get<0>(data) << "]" << std::endl;
 
     NSString *mimeType = getNSString(std::get<2>(data));
     NSURLResponse *response = [[NSURLResponse alloc] initWithURL:url MIMEType:mimeType expectedContentLength:-1 textEncodingName:nil];
@@ -401,13 +497,12 @@ public:
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
-    std::cout << "applicationDidFinishLaunching" << std::endl;
+//    std::cout << "applicationDidFinishLaunching" << std::endl;
     if ([NSURLProtocol registerClass:[EmbeddedURLProtocol class]]) {
-        NSLog(@"URLProtocol registration successful.");
+        //NSLog(@"URLProtocol registration successful.");
     } else {
         NSLog(@"URLProtocol registration failed.");
     }
-    std::cout << "ADFL:" << self << ":" << &wb_ << std::endl;
 
     // call callback
     if(s::app().onInit){
@@ -443,13 +538,8 @@ public:
 }
 
 -(void)webView:(WebView *)webView windowScriptObjectAvailable : (WebScriptObject *)wso {
-    std::cout << "windowScriptObjectAvailable" << std::endl;
-    WuiObjDelegate* wob = [WuiObjDelegate new];
-    assert(wb_);
-    wob->wb_ = wb_;
-    assert(wso != 0);
-    NSString *pstr = getNSString("nproxy");
-    [wso setValue : wob forKey : pstr];
+//    std::cout << "windowScriptObjectAvailable" << std::endl;
+
     assert(wb_);
     if (wb_->onLoad) {
         wb_->onLoad("");
@@ -936,6 +1026,9 @@ struct s::wui::window::Impl : public IUnknown {
     void addCustomObject(IDispatch* custObj, const std::string& name);
     //
     bool open();
+    inline void setDefaultMenu() {
+    }
+
     inline void setMenu(const menu& /*m*/) {
         throw s::exception("Not implemented: setMenu");
     }
@@ -1459,6 +1552,9 @@ public:
         return true;
     }
 
+    inline void setDefaultMenu() {
+    }
+
     inline void setMenu(const menu& m) {
     }
 
@@ -1680,6 +1776,9 @@ public:
         return false;
     }
 
+    inline void setDefaultMenu() {
+    }
+
     inline void setMenu(const menu& m) {
     }
 
@@ -1724,12 +1823,12 @@ void s::wui::window::setContentSourceResource(const std::string& path) {
     return impl_->setContentSourceResource(path);
 }
 
-const std::tuple<const unsigned char*, size_t, std::string>& s::wui::window::getEmbeddedSource(const std::string& url) {
-    return impl_->getEmbeddedSource(url);
-}
-
 bool s::wui::window::open() {
     return impl_->open();
+}
+
+void s::wui::window::setDefaultMenu() {
+    impl_->setDefaultMenu();
 }
 
 void s::wui::window::setMenu(const menu& m) {
@@ -1742,6 +1841,10 @@ void s::wui::window::go(const std::string& url) {
 
 void s::wui::window::eval(const std::string& str) {
     impl_->eval(str);
+}
+
+void s::wui::window::addNativeObject(const std::string& name, s::js::objectbase& jo) {
+    impl_->addNativeObject(name, jo);
 }
 
 ////////////////////////////
