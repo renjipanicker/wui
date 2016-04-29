@@ -67,6 +67,27 @@ namespace {
             return fit->second;
         }
     };
+
+    inline void addCommonPage(s::wui::window& wb) {
+        // NOTE: do not put console.log(), or any other native calls, in this code
+        // as it will create recursion. Use alert() instead, but sparingly.
+        static std::string initstr =
+        "function _wui_convertToNative(val){\n"
+        "  var nval = val;\n"
+        "  nval = String(val);\n"
+        "  return nval;\n"
+        "}\n"
+        "function _wui_convertFromNative(val){\n"
+        "  var nval = val;\n"
+        "  if(!val) {\n"
+        "    return val;\n"
+        "  }\n"
+        "  nval = eval(val);\n"
+        "  return nval;\n"
+        "}\n"
+        ;
+        wb.eval(initstr);
+    }
 }
 
 inline s::wui::window::Impl& s::wui::window::impl() {
@@ -541,6 +562,7 @@ public:
 //    std::cout << "windowScriptObjectAvailable" << std::endl;
 
     assert(wb_);
+    addCommonPage(*wb_);
     if (wb_->onLoad) {
         wb_->onLoad("");
     }

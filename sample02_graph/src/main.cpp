@@ -6,12 +6,15 @@ struct node {
     int x;
     int y;
     bool fixed;
-    void testf(const std::string& txt){
-        std::cout << "calling testf:" << txt << std::endl;
+    void testf(const int& txt, std::vector<std::string> il){
+        std::cout << "calling testf:" << txt << ", len(il):" << il.size() << std::endl;
+        for(auto& x : il){
+            std::cout << "-:" << x << std::endl;
+        }
     }
 };
 
-void load(const std::string& txt);
+void refresh(const std::string& txt);
 
 auto jnode = s::js::klass<node>("NodeT")
             .property("x", &node::x)
@@ -70,8 +73,8 @@ int main(int argc, const char* argv[]){
 
         // add napp object with napp.send() function
         auto& napp = w.newObject("napp");
-        napp.fn("send") = [](const std::string& text) {
-            std::cout << "w::napp::send:" << text << std::endl;
+        napp.fn("send") = [](const int& val) {
+            std::cout << "w::napp::send:" << val << std::endl;
         };
         w.addObject(napp);
     };

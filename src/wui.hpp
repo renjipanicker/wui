@@ -1,4 +1,5 @@
 #pragma once
+#include <iostream>
 #include <sstream>
 #include <map>
 #include <vector>
@@ -16,110 +17,184 @@ namespace s {
             inline conversion_context(const std::vector<std::string>& a) : args(a) {}
         };
 
-        /// \brief convert function parameter from string to native
-        template <typename T>
-        inline T convertFromJS(conversion_context& ctx, size_t& idx) {
-            T val;
-            std::istringstream ss(ctx.args.at(idx++));
-            ss >> val;
-            return val;
-        }
-
-        /// \brief specialise for bool
-        template <>
-        inline bool convertFromJS<bool>(conversion_context& ctx, size_t& idx) {
-            auto& p = ctx.args.at(idx++);
-            if(p == "true"){
-                return true;
+        /// \brief base class for convertor from string to native
+        template <typename T, typename DerT>
+        struct convertorbase {
+            static inline T convertFromJS(const std::string& str) {
+                T val;
+                std::istringstream ss(str);
+                ss >> val;
+                return val;
             }
-            return false;
-        }
 
-        /// \brief specialise for string
-        /// don't go thru stringstream
-        template <>
-        inline std::string convertFromJS<std::string>(conversion_context& ctx, size_t& idx) {
-            return ctx.args.at(idx++);
-        }
-
-        /// \brief convert return value from native to string
-        template <typename T>
-        inline void setReturn(conversion_context& ctx, const T& t) {
-            std::ostringstream ss;
-            ss << t;
-            ctx.retv = ss.str();
-        }
-
-        /// \brief specialise for bool
-        template <>
-        inline void setReturn<bool>(conversion_context& ctx, const bool& t) {
-            if(t){
-                ctx.retv = "true";
+            static inline T convertParamFromJS(conversion_context& ctx, size_t& idx) {
+                return DerT::convertFromJS(ctx.args.at(idx++));
             }
-            ctx.retv = "false";
-        }
 
-        /// \brief specialise for string
+            static inline auto convertToJS(conversion_context& ctx, const T& t) {
+                std::ostringstream ss;
+                ss << t;
+                return ss.str();
+            }
+
+            static inline std::string convertToNative(const std::string& var) {
+                return "String(" + var + ")";
+            }
+        };
+
+        /// \brief convertor from string to native
+        template <typename T>
+        struct convertor : public convertorbase<T, convertor<T>> {
+            static inline std::string getJsTypeName();
+        };
+
         template <>
-        inline void setReturn<std::string>(conversion_context& ctx, const std::string& t) {
-            ctx.retv = t;
-        }
+        struct convertor<int> : public convertorbase<int, convertor<int>>{
+            static inline std::string getJsTypeName() {
+                return "number";
+            }
+        };
+
+        template <>
+        struct convertor<bool> : public convertorbase<bool, convertor<bool>> {
+            static inline bool convertFromJS(const std::string& str) {
+                if(str == "true"){
+                    return true;
+                }
+                return false;
+            }
+
+            static inline std::string convertToJS(conversion_context& ctx, const bool& t) {
+                if(t){
+                    return "true";
+                }
+                return "false";
+            }
+
+            static inline std::string getJsTypeName() {
+                return "bool";
+            }
+        };
+
+        template <>
+        struct convertor<std::string> : public convertorbase<std::string, convertor<std::string>> {
+            static inline auto convertFromJS(const std::string& str) {
+                auto rv = str.substr(1, str.length() - 2); // strip double-quotes from ends
+                return rv;
+            }
+
+            static inline auto convertToJS(conversion_context& ctx, const std::string& t) {
+                return t;
+            }
+
+            static inline std::string getJsTypeName() {
+                return "string";
+            }
+
+            static inline std::string convertToNative(const std::string& var) {
+                return "'\"' + String(" + var + ") + '\"'";
+            }
+        };
+
+        template <typename T>
+        struct convertor<std::vector<T>> : public convertorbase<std::vector<T>, convertor<std::vector<T>>> {
+            static inline std::vector<T> convertFromJS(const std::string& str) {
+                auto spos = str.find('\1');
+                decltype(spos) lpos = 0;
+                std::vector<T> rv;
+                while(lpos != std::string::npos){
+                    std::string elem;
+                    if(spos == std::string::npos){
+                        elem = str.substr(lpos);
+                        lpos = spos;
+                    }else{
+                        elem = str.substr(lpos, spos - lpos);
+                        lpos = spos+1;
+                    }
+
+                    rv.push_back(convertor<T>::convertFromJS(elem));
+                    spos = str.find('\1', lpos);
+                }
+                return rv;
+            }
+
+            static inline auto convertToJS(conversion_context& ctx, const std::vector<T>& t) {
+                std::string sep;
+                std::string rv = "[";
+                for(auto& v : t){
+                    rv += sep;
+                    rv += convertor<T>::convertToJS(v);
+                    sep = ",";
+                }
+                rv += "]";
+                return rv;
+            }
+
+            static inline std::string getJsTypeName() {
+                return "array";
+            }
+
+            static inline std::string convertToNative(const std::string& var) {
+                std::ostringstream ss;
+                ss << "function(){" << std::endl;
+                ss << "      var lst = '';" << std::endl;
+                ss << "      var sep = '';" << std::endl;
+                ss << "      for(var i in " + var + ") {" << std::endl;
+                ss << "        lst += sep;" << std::endl;
+                ss << "        lst += " << convertor<T>::convertToNative(var + "[i]") << ";" << std::endl;
+                ss << "        sep = '\1';" << std::endl;
+                ss << "      }" << std::endl;
+                ss << "      return lst;" << std::endl;
+                ss << "    }()";
+                return ss.str();
+            }
+        };
 
         /////////////////////////////////////////////////
-        template <typename T>inline std::string getJsTypeName();
-        template <>inline std::string getJsTypeName<std::string>(){return "string";}
-        template <>inline std::string getJsTypeName<int>(){return "number";}
-        template <>inline std::string getJsTypeName<bool>(){return "bool";}
-
-        /////////////////////////////////////////////////
-        static inline auto getAddParamStatement(const size_t& idx, const std::string& t, std::ostringstream& ss){
+        /// T: decay'ed type
+        template <typename T>
+        static inline auto getParamStatement(const size_t& idx, const std::string& t, std::ostringstream& ss){
             std::ostringstream ts;
             ts << "p" << idx;
             auto var = ts.str();
-
-            ss << "    if(typeof " << var << " == '" << t << "') {" << std::endl;
-            if(t == "string"){
-                ss << "      rv.push(" << var << ");" << std::endl;
-            }else{
-                ss << "      rv.push(String(" << var << "));" << std::endl;
-            }
-            ss << "    }else{" << std::endl;
-            if(t == "string"){
-                ss << "      rv.push(String(" << var << "));" << std::endl;
-            }else{
-                ss << "      nproxy.error('');" << std::endl;
-            }
-            ss << "    }" << std::endl;
+            ss << "    /*" << convertor<T>::getJsTypeName() << "*/" << std::endl;
+            ss << "    rv.push(" << convertor<T>::convertToNative(var) << ");" << std::endl;
             return var;
         }
 
-        static inline void addStringList(std::ostringstream& /*ss*/, std::ostringstream& /*sp*/){
-            assert(false);
-        }
+        template<typename...>
+        struct ParamStatementListGenerator;
 
-        template <typename T, typename... A>
-        static inline void addStringList(std::ostringstream& ss, std::ostringstream& sp, T t, A... a){
-            auto var = getAddParamStatement(sizeof...(A), t, ss);
-            sp << var;
-            if(sizeof...(A) > 0){
-                sp << ", ";
-                addStringList(ss, sp, a...);
-            }
-        }
+        template<typename T, typename...A>
+        struct ParamStatementListGenerator<T, A...> {
+             static void call(std::ostringstream& ss, std::ostringstream& sp) {
+                auto var = getParamStatement<typename std::decay<T>::type>(sizeof...(A), "", ss);
+                sp << var;
+                if(sizeof...(A) > 0){
+                    sp << ", ";
+                    ParamStatementListGenerator<A...>::call(ss, sp);
+                }
+             }
+        };
 
-        template <typename... A>
+        template<>
+        struct ParamStatementListGenerator<> {
+             static void call(std::ostringstream& /*ss*/, std::ostringstream& /*sp*/) {
+             }
+        };
+
+        template <typename Ret, typename... A>
         static inline std::string getFunctionBody(const std::string& name){
             std::ostringstream ss;
             std::ostringstream sp;
-            addStringList(ss, sp, getJsTypeName<typename std::decay<A>::type>()...);
+            ParamStatementListGenerator<A...>::call(ss, sp);
 
             std::ostringstream os;
             os << "function(" << sp.str() << "){" << std::endl;
             os << "    var rv = new Array();" << std::endl;
             os << ss.str() << std::endl;
             os << "    var vv = this.__nobj__.invoke('" << name << "', rv);" << std::endl;
-//            os << "    return valueOf(vv);" << std::endl;
-            os << "    return vv;" << std::endl;
+            os << "    return _wui_convertFromNative(vv);" << std::endl;
             os << "  }";
             return os.str();
         }
@@ -133,13 +208,13 @@ namespace s {
             typedef Res (Cls::*FnT)(Args...);
             static inline void afn_run(Cls fnx, conversion_context& ctx) {
                 size_t idx = 0;
-                auto rv = fnx(convertFromJS<typename std::decay<Args>::type>(ctx, idx)...);
-                setReturn(ctx, rv);
+                auto rv = fnx(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
+                ctx.retv = convertor<typename std::decay<decltype(rv)>::type>::convertToJS(ctx, rv);
             }
             static inline void obj_run(Cls obj, FnT fn, conversion_context& ctx) {
                 size_t idx = 0;
-                auto rv = (obj.*fn)(convertFromJS<typename std::decay<Args>::type>(ctx, idx)...);
-                setReturn(ctx, rv);
+                auto rv = (obj.*fn)(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
+                ctx.retv = convertor<typename std::decay<decltype(rv)>::type>::convertToJS(ctx, rv);
             }
         };
 
@@ -148,48 +223,41 @@ namespace s {
             typedef void (Cls::*FnT)(Args...);
             static inline void afn_run(Cls fnx, conversion_context& ctx) {
                 size_t idx = 0;
-                fnx(convertFromJS<typename std::decay<Args>::type>(ctx, idx)...);
+                fnx(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
             }
             static inline void obj_run(Cls obj, FnT fn, conversion_context& ctx) {
                 size_t idx = 0;
-                (obj.*fn)(convertFromJS<typename std::decay<Args>::type>(ctx, idx)...);
+                (obj.*fn)(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
             }
         };
 
         /////////////////////////////////////////////////
+        template <typename Cls, typename Ret, typename... Args>
+        struct classdefbase {
+            typedef Ret (Cls::*FnT)(Args...);
+            static inline void afn_invoke(Cls f, conversion_context& ctx) {
+                return Invoker<FnT>::afn_run(f, ctx);
+            }
+            static inline void obj_invoke(Cls obj, FnT fn, conversion_context& ctx) {
+                return Invoker<FnT>::obj_run(obj, fn, ctx);
+            }
+            static inline auto stringy(const std::string& name) {
+                return getFunctionBody<Ret, Args...>(name);
+            }
+        };
+
         template <typename T>
         struct class_def {};
 
         // member function
         template <typename Cls, typename Ret, typename... Args>
-        struct class_def<Ret (Cls::*)(Args...)> {
-            typedef Ret (Cls::*FnT)(Args...);
-            static inline void afn_invoke(Cls f, conversion_context& ctx) {
-                return Invoker<FnT>::afn_run(f, ctx);
-            }
-            static inline void obj_invoke(Cls obj, FnT fn, conversion_context& ctx) {
-                return Invoker<FnT>::obj_run(obj, fn, ctx);
-            }
-            static inline auto stringy(const std::string& name) {
-                return getFunctionBody<Args...>(name);
-            }
-        };
+        struct class_def<Ret (Cls::*)(Args...)> : public classdefbase<Cls, Ret, Args...> {};
 
         // const member function
         template <typename Cls, typename Ret, typename... Args>
-        struct class_def<Ret (Cls::*)(Args...) const> {
-            typedef Ret (Cls::*FnT)(Args...);
-            static inline void afn_invoke(Cls f, conversion_context& ctx) {
-                return Invoker<FnT>::afn_run(f, ctx);
-            }
-            static inline void obj_invoke(Cls obj, FnT fn, conversion_context& ctx) {
-                return Invoker<FnT>::obj_run(obj, fn, ctx);
-            }
-            static inline auto stringy(const std::string& name) {
-                return getFunctionBody<Args...>(name);
-            }
-        };
+        struct class_def<Ret (Cls::*)(Args...) const> : public classdefbase<Cls, Ret, Args...> {};
 
+        /////////////////////////////////////////////////
         /// \brief generic for member functions
         template <typename T, typename=void>
         struct get_signature_impl {
@@ -257,17 +325,17 @@ namespace s {
                 auto gn = "get_" + name;
                 fnl_[gn] = [p](s::js::conversion_context& ctx, ObjT& obj) {
                     auto& rv = (obj.*p);
-                    setReturn(ctx, rv);
+                    ctx.retv = convertor<typename std::decay<decltype(rv)>::type>::convertToJS(ctx, rv);
                 };
 
                 auto sn = "set_" + name;
                 fnl_[sn] = [p](s::js::conversion_context& ctx, ObjT& obj) {
-                    size_t idx = 0; // need this coz idx parameter to convertFromJS() is a non-const ref
-                    (obj.*p) = convertFromJS<PT>(ctx, idx);
+                    size_t idx = 0; // need this coz idx parameter to convertParamFromJS() is a non-const ref
+                    (obj.*p) = convertor<PT>::convertParamFromJS(ctx, idx);
                 };
 
                 std::ostringstream sp;
-                auto var = getAddParamStatement(0, getJsTypeName<PT>(), sp);
+                auto var = getParamStatement<PT>(0, convertor<PT>::getJsTypeName(), sp);
 
                 std::ostringstream ss_;
                 ss_ << std::endl;
@@ -362,7 +430,7 @@ namespace s {
 
     /// \brief web UI
     namespace wui {
-        /// \brief cross-platform systray functions
+        /// \brief cross-platform menu functions
         /// \todo: to implement
         struct menu {
             std::string name;
