@@ -466,7 +466,7 @@ public:
         auto wso = [webView windowScriptObject];
         NSString* evalScriptString = [NSString stringWithUTF8String : str.c_str()];
         std::cout << "EVAL:" << std::string([evalScriptString UTF8String]) << std::endl;
-        id x = [wso evaluateWebScript : evalScriptString];
+        /*id x = */[wso evaluateWebScript : evalScriptString];
         //std::cout << x << std::endl;
     }
 };
