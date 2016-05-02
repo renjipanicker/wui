@@ -34,17 +34,12 @@ int main(int argc, const char* argv[]){
         std::cout << "w::onLoad:" << url << std::endl;
 
         // add console object with console.log function
-        auto& console = w.addObject("console");
+        auto& console = w.newObject("console");
         console.fn("log") = [](const std::string& text) {
             std::cout << "w::log:" << text << std::endl;
             return 1;
         };
-
-        // add napp object with napp.send function
-        auto& napp = w.addObject("napp");
-        napp.fn("send") = [](const std::string& text) {
-            std::cout << "w::napp::send:" << text << std::endl;
-        };
+        w.addObject(console);
     };
 
     std::cout << "Starting loop" << std::endl;

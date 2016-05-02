@@ -7,6 +7,7 @@ PACKER := $(NDK_APP_OUT)/packer
 PACKER_SRC := ../../../src/packer.cpp
 $(PACKER): $(PACKER_SRC)
 		echo "in packer target"
+		mkdir -p $(NDK_APP_OUT)
 		clang++ $(APP_CPPFLAGS) -o $(PACKER) $(PACKER_SRC)
 
 ####

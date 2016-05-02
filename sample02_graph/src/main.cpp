@@ -70,13 +70,6 @@ int main(int argc, const char* argv[]){
             return 1;
         };
         w.addObject(console);
-
-        // add napp object with napp.send() function
-        auto& napp = w.newObject("napp");
-        napp.fn("send") = [](const int& val) {
-            std::cout << "w::napp::send:" << val << std::endl;
-        };
-        w.addObject(napp);
     };
 
     // save file

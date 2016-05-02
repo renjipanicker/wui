@@ -7,10 +7,11 @@ PACKER := $(NDK_APP_OUT)/packer
 PACKER_SRC := ../../../src/packer.cpp
 $(PACKER): $(PACKER_SRC)
 		echo "in packer target"
+		mkdir -p $(NDK_APP_OUT)
 		clang++ $(APP_CPPFLAGS) -o $(PACKER) $(PACKER_SRC)
 
 ####
-HTML_SRC := ../../src/index.html ../../src/jquery-ui.css ../../src/jquery-ui.js ../../src/jquery.js ../../src/style.css
+HTML_SRC := ../../src/index.html ../../src/d3.min.js
 jni/../$(NDK_APP_OUT)/html.cpp: $(HTML_SRC) $(PACKER)
 		echo "in html target"
 		$(PACKER) -d $(NDK_APP_OUT)/ -v html -p html/ $(HTML_SRC)

@@ -4,3 +4,12 @@ sample01_jquery/bld
 sample02_graph/prj/android/local.properties
 sample02_graph/bld
 
+sample01_jquery/prj/android/bin/
+sample01_jquery/prj/android/gen/
+sample01_jquery/prj/android/libs/
+sample01_jquery/prj/android/obj/
+sample02_graph/prj/android/bin/
+sample02_graph/prj/android/gen/
+sample02_graph/prj/android/libs/
+sample02_graph/prj/android/obj/
+

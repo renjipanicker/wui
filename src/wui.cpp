@@ -1563,6 +1563,10 @@ public:
         csd.setEmbeddedSource(lst);
     }
 
+    inline void setContentSourceResource(const std::string& path) {
+        csd.setResourceSource(path);
+    }
+
     inline const auto& getEmbeddedSource(const std::string& url) {
         return csd.getEmbeddedSource(url);
     }
@@ -1581,7 +1585,12 @@ public:
     }
 
     inline std::string invoke(const std::string& obj, const std::string& fn, const std::vector<std::string>& params) {
-        return wb.invoke(obj, fn, params);
+//        return wb.invoke(obj, fn, params);
+        assert(false);
+        return "";
+    }
+
+    inline void addNativeObject(const std::string& name, s::js::objectbase& jo) {
     }
 
     inline void eval(const std::string& str) {
