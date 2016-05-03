@@ -443,31 +443,32 @@ public:
             resourcesPath = [resourcesPath stringByAppendingString : getNSString(csd.path)];
             pstr = [resourcesPath stringByAppendingString : pstr];
         }
-        //std::cout << "go:" << getCString(pstr) << std::endl;
         loadPage(pstr);
     }
 
-    inline void addNativeObject(const std::string& name, s::js::objectbase& jo, WebScriptObject* wso) {
+    inline void eval(const std::string& str) {
+        auto jstr = jspfx + str;
+        auto wso = [webView windowScriptObject];
+        NSString* evalScriptString = [NSString stringWithUTF8String : jstr.c_str()];
+        std::cout << "EVAL:" << std::string([evalScriptString UTF8String]) << std::endl;
+        /*id x = */[wso evaluateWebScript : evalScriptString];
+        //std::cout << x << std::endl;
+    }
+
+    inline void addNativeObject(s::js::objectbase& jo, WebScriptObject* wso, const std::string& body) {
         WuiObjDelegate* wob = [WuiObjDelegate new];
         wob->jo_ = &jo;
         wob->wb_ = &wb;
         assert(wso != 0);
-        NSString *pstr = getNSString(name);
+        NSString *pstr = getNSString(jo.name);
         [wso setValue : wob forKey : pstr];
+        eval(body);
     }
 
-    inline void addNativeObject(const std::string& name, s::js::objectbase& jo) {
+    inline void addNativeObject(s::js::objectbase& jo, const std::string& body) {
         WebScriptObject* wso = [webView windowScriptObject];
         assert(wso != 0);
-        return addNativeObject(name, jo, wso);
-    }
-
-    inline void eval(const std::string& str) {
-        auto wso = [webView windowScriptObject];
-        NSString* evalScriptString = [NSString stringWithUTF8String : str.c_str()];
-        std::cout << "EVAL:" << std::string([evalScriptString UTF8String]) << std::endl;
-        /*id x = */[wso evaluateWebScript : evalScriptString];
-        //std::cout << x << std::endl;
+        return addNativeObject(jo, wso, body);
     }
 };
 
@@ -1481,13 +1482,16 @@ inline int s::application::Impl::loop() {
 
 #ifdef WUI_NDK
 ////////////////////////////////////
-#define LOG_TAG "WuiLog"
-#define ALOG(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+#define ALOG(...) __android_log_print(ANDROID_LOG_INFO, _s_tag.c_str(), __VA_ARGS__)
 namespace {
+    static std::string _s_tag = "WUILOG";
+
     static JavaVM* _s_jvm = nullptr;
     static std::string _s_datadir;
     static ::jobject _s_activity = 0;
     static ::jclass _s_activityCls = 0;
+    static ::jmethodID _s_setObjectFn = 0;
     static ::jmethodID _s_goEmbeddedFn = 0;
     static ::jmethodID _s_goStandardFn = 0;
     static s::application::Impl* _s_impl = nullptr;
@@ -1559,6 +1563,13 @@ public:
         }
     }
 
+    inline void onInitPage(const std::string& url) {
+        if(url.compare(0, jspfx.length(), jspfx) == 0){
+            return;
+        }
+        addCommonPage(wb);
+    }
+
     inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
         csd.setEmbeddedSource(lst);
     }
@@ -1585,28 +1596,53 @@ public:
     }
 
     inline std::string invoke(const std::string& obj, const std::string& fn, const std::vector<std::string>& params) {
-//        return wb.invoke(obj, fn, params);
-        assert(false);
-        return "";
+        auto& jo = wb.getObject(obj);
+        auto rv = jo.invoke(fn, params);
+        return rv;
     }
 
-    inline void addNativeObject(const std::string& name, s::js::objectbase& jo) {
+    inline void addNativeObject(s::js::objectbase& jo, const std::string& body) {
+        ALOG("addNativeObject:%s", jo.name.c_str());
+        auto fbody = jspfx + body;
+        JniEnvGuard envg;
+        jstring jname = envg.env->NewStringUTF(jo.name.c_str());
+        jstring jnname = envg.env->NewStringUTF(jo.nname.c_str());
+        jstring jbody = envg.env->NewStringUTF(fbody.c_str());
+        envg.env->CallVoidMethod(_s_activity, _s_setObjectFn, jname, jnname, jbody);
     }
 
     inline void eval(const std::string& str) {
-        std::string data = jspfx + str;
+        auto jstr = jspfx + str;
         JniEnvGuard envg;
-        jstring jdata = envg.env->NewStringUTF(data.c_str());
+        jstring jdata = envg.env->NewStringUTF(jstr.c_str());
         envg.env->CallVoidMethod(_s_activity, _s_goStandardFn, jdata);
     }
 
     inline void go(const std::string& url) {
-        auto& data = getEmbeddedSource(url);
+        try{
+            onLoad(url);
+        }catch(const std::exception& ex){
+            ALOG("onLoad-error:%s", ex.what());
+        }
         JniEnvGuard envg;
-        jstring jurl = envg.env->NewStringUTF(url.c_str());
-        jstring jstr = envg.env->NewStringUTF((const char*)std::get<0>(data));
-        jstring jmimetype = envg.env->NewStringUTF(std::get<2>(data).c_str());
-        envg.env->CallVoidMethod(_s_activity, _s_goEmbeddedFn, jurl, jstr, jmimetype);
+        if(csd.type == s::wui::ContentSourceType::Embedded){
+            auto& data = getEmbeddedSource(url);
+            jstring jurl = envg.env->NewStringUTF(url.c_str());
+            jstring jstr = envg.env->NewStringUTF((const char*)std::get<0>(data));
+            jstring jmimetype = envg.env->NewStringUTF(std::get<2>(data).c_str());
+            envg.env->CallVoidMethod(_s_activity, _s_goEmbeddedFn, jurl, jstr, jmimetype);
+        }else if(csd.type == s::wui::ContentSourceType::Resource){
+            auto rpath = csd.path;
+            if(rpath.at(0) == '/') {
+                rpath = rpath.substr(1);
+            }
+            if(rpath.at(rpath.length()-1) == '/') {
+                rpath = rpath.substr(0, rpath.length()-1);
+            }
+            auto furl = "file:///android_asset/" + rpath + "/" + url;
+            jstring jurl = envg.env->NewStringUTF(furl.c_str());
+            envg.env->CallVoidMethod(_s_activity, _s_goStandardFn, jurl);
+        }
     }
 };
 
@@ -1635,28 +1671,6 @@ public:
         return _s_datadir;
     }
 
-    inline int loop() {
-        if(app.onInit){
-            app.onInit();
-        }
-
-        ALOG("looping");
-        // wait for done to be true
-        while(!done){
-            std::unique_lock<std::mutex> lk(mxq_);
-            cv_.wait(lk, [&]{return mq_.size() > 0;});
-            auto fn = mq_.front();
-            mq_.pop();
-            try {
-                fn();
-            }catch(const std::exception& ex){
-                ALOG("error:%s", ex.what());
-            }
-        }
-        ALOG("done looping");
-        return 0;
-    }
-
     inline void post(std::function<void()> fn) {
         // set done to true
         {
@@ -1665,6 +1679,38 @@ public:
         }
         // notify loop
         cv_.notify_one();
+    }
+
+    inline auto wait() {
+        std::unique_lock<std::mutex> lk(mxq_);
+        cv_.wait(lk, [&]{return mq_.size() > 0;});
+        auto fn = mq_.front();
+        mq_.pop();
+        return fn;
+    }
+
+    inline int loop() {
+        auto& app = this->app;
+        post([&app](){
+            if(app.onInit){
+                app.onInit();
+            }
+        });
+
+        // wait for done to be true
+        ALOG("enter loop");
+        while(!done){
+            auto fn = wait();
+            try {
+                fn();
+            }catch(const std::exception& ex){
+                ALOG("task-error:%s", ex.what());
+            }catch(...){
+                ALOG("task-error:<unknown>");
+            }
+        }
+        ALOG("leave loop");
+        return 0;
     }
 };
 
@@ -1694,13 +1740,18 @@ extern "C" {
         return JNI_VERSION_1_6;
     }
 
-    JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initNative(JNIEnv* env, jobject activity, jobjectArray jparams) {
+    JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initNative(JNIEnv* env, jobject activity, jstring jtag, jobjectArray jparams) {
         jclass activityCls = env->FindClass("com/renjipanicker/wui");
         if (!activityCls) {
             throw std::runtime_error(std::string("unable to obtain wui class"));
         }
 
         _s_activityCls = reinterpret_cast<jclass>(env->NewGlobalRef(activityCls));
+
+        _s_setObjectFn = env->GetMethodID(_s_activityCls, "setObject", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+        if (!_s_setObjectFn) {
+            throw std::runtime_error(std::string("unable to obtain wui::setObject"));
+        }
 
         _s_goEmbeddedFn = env->GetMethodID(_s_activityCls, "go_embedded", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
         if (!_s_goEmbeddedFn) {
@@ -1712,6 +1763,7 @@ extern "C" {
             throw std::runtime_error(std::string("unable to obtain wui::go_standard"));
         }
 
+        _s_tag = convertJniStringToStdString(env, jtag);
         _s_activity = reinterpret_cast<jobject>(env->NewGlobalRef(activity));
 
         auto params = convertJavaArrayToVector(env, jparams);
@@ -1720,17 +1772,16 @@ extern "C" {
 
     JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initPage(JNIEnv* env, jobject activity, jstring jurl) {
         const std::string url = convertJniStringToStdString(env, jurl);
-        ALOG("initPage:%s", url.c_str());
         if(_s_impl != nullptr){
             _s_impl->post([url](){
                 if(_s_wimpl != nullptr){
-                    _s_wimpl->onLoad(url);
+                    _s_wimpl->onInitPage(url);
                 }
             });
         }
     }
 
-    JNIEXPORT void JNICALL Java_com_renjipanicker_wui_exitNative(JNIEnv* env, jobject thiz) {
+    JNIEXPORT void JNICALL Java_com_renjipanicker_wui_exitNative(JNIEnv* env, jobject activity) {
         if(_s_impl != nullptr){
             _s_impl->post([](){
                 _s_impl->exit(0);
@@ -1738,54 +1789,13 @@ extern "C" {
         }
     }
 
-    inline jobjectArray handleRequestEx(JNIEnv* env, jobject thiz, jstring jurl) {
-        if(_s_wimpl == nullptr){
-            return 0;
-        }
-
-        auto url = convertJniStringToStdString(env, jurl);
-        if(url.compare(0, empfx.length(), empfx) != 0){
-            return 0;
-        }
-
-        url = url.substr(empfx.length());
-        auto& data = _s_wimpl->getEmbeddedSource(url);
-        jstring jdata = env->NewStringUTF((const char*)std::get<0>(data));
-        jstring jmimetype = env->NewStringUTF(std::get<2>(data).c_str());
-        auto slen = strlen((const char*)std::get<0>(data));
-        ALOG("handleReqEx:data len:%d (%s)", slen, url.c_str());
-
-        jobjectArray arr = env->NewObjectArray(2, env->FindClass("java/lang/String"), 0);
-        env->SetObjectArrayElement(arr, 0, jmimetype);
-        env->SetObjectArrayElement(arr, 1, jdata);
-        return arr;
-    }
-
-    JNIEXPORT jobjectArray JNICALL Java_com_renjipanicker_wui_handleRequest(JNIEnv* env, jobject thiz, jstring jurl) {
-        try{
-            return handleRequestEx(env, thiz, jurl);
-        }catch(const std::exception& ex){
-            ALOG("error in handleRequestEx:%s", ex.what());
-        }
-        return 0;
-    }
-
     JNIEXPORT void JNICALL Java_com_renjipanicker_wui_invokeNative(JNIEnv* env, jobject activity, jstring jobj, jstring jfn, jobjectArray jparams) {
         const std::string obj = convertJniStringToStdString(env, jobj);
         const std::string fn = convertJniStringToStdString(env, jfn);
 
-        std::string x = obj + "." + fn + "(";
-        std::string sep;
         auto params = convertJavaArrayToVector(env, jparams);
-        for(auto& par : params){
-            x += sep;
-            x += par;
-            sep = ", ";
-        }
-        x += ")";
-
         if(_s_impl != nullptr){
-            _s_impl->post([x, obj, fn, params](){
+            _s_impl->post([obj, fn, params](){
                 if(_s_wimpl != nullptr){
                     _s_wimpl->invoke(obj, fn, params);
                 }
@@ -1874,8 +1884,8 @@ void s::wui::window::eval(const std::string& str) {
     impl_->eval(str);
 }
 
-void s::wui::window::addNativeObject(const std::string& name, s::js::objectbase& jo) {
-    impl_->addNativeObject(name, jo);
+void s::wui::window::addNativeObject(s::js::objectbase& jo, const std::string& body) {
+    impl_->addNativeObject(jo, body);
 }
 
 ////////////////////////////

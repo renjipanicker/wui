@@ -280,7 +280,7 @@ namespace s {
 
             inline klass(const std::string& name) : name_(name) {
                 std::stringstream ss_;
-                ss_ << "function " << name_ << "(nobj) {" << std::endl;
+                ss_ << "function cls_" << name_ << "(nobj) {" << std::endl;
                 ss_ << "  this.__nobj__ = nobj;";
                 str_ += ss_.str();
             }
@@ -493,18 +493,24 @@ namespace s {
 
             template<typename ObjT>
             inline void addClass(const s::js::klass<ObjT>& kls) {
-                eval("javascript:" + kls.str());
+                eval(kls.str());
             }
 
             /// \brief add native object into DOM
-            void addNativeObject(const std::string& name, s::js::objectbase& jo);
+            void addNativeObject(s::js::objectbase& jo, const std::string& body);
+
+            inline auto getBody(const std::string& objname, const std::string& fndef, const std::string& nativename) {
+                std::string body;
+                body += "window." + objname + " = new " + fndef + "(" + nativename + ");";
+                return body;
+            }
 
             template <typename ObjT>
             inline void setObject(const s::js::klass<ObjT>& kls, const std::string& name, ObjT& obj) {
                 objList_[name] = std::make_unique<s::js::objectT<ObjT>>(name, kls, obj);
                 auto& jo = objList_[name];
-                addNativeObject(jo->nname, *jo);
-                eval("javascript:var " + name + " = new " + kls.name_ + "(" + jo->nname + ");");
+                auto body = getBody(name, kls.name_, jo->nname);
+                addNativeObject(*jo, body);
             }
 
             inline auto& newObject(const std::string& name) {
@@ -512,14 +518,22 @@ namespace s {
                 auto pobj = nobj.get();
                 objList_[name] = std::move(nobj);
                 auto& jo = objList_[name];
-                addNativeObject(jo->nname, *jo);
                 return *pobj;
             }
 
             inline void addObject(s::js::object& obj) {
                 obj.kls.end();
-                auto body = "var " + obj.name + " = new " + obj.kls.str() + "(" + obj.nname + ");\n";
-                eval("javascript:" + body);
+                auto body = getBody(obj.name, obj.kls.str(), obj.nname);
+                addNativeObject(obj, body);
+            }
+
+            inline auto& getObject(const std::string& name) {
+                auto oit = objList_.find(name);
+                if (oit == objList_.end()) {
+                    throw std::runtime_error(std::string("unknown object:") + name);
+                }
+
+                return *(oit->second);
             }
 
             /// \brief eval a string
