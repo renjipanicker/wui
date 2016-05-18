@@ -514,11 +514,9 @@ namespace s {
             }
 
             inline auto& newObject(const std::string& name) {
-                auto nobj = std::make_unique<s::js::object>(name);
-                auto pobj = nobj.get();
-                objList_[name] = std::move(nobj);
+                objList_[name] = std::make_unique<s::js::object>(name);
                 auto& jo = objList_[name];
-                return *pobj;
+                return dynamic_cast<s::js::object&>(*jo);
             }
 
             inline void addObject(s::js::object& obj) {

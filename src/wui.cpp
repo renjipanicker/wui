@@ -357,10 +357,17 @@ public:
     inline void setMenu(const menu&) {
     }
 
+    inline void setAlwaysOnTop(const bool& aot) {
+        if(aot){
+            [window setLevel:NSStatusWindowLevel];
+        }else{
+            // \todo: remove AOT
+        }
+    }
+
     inline bool open() {
         // get singleton app instance
         NSApplication *app = [NSApplication sharedApplication];
-
         // create WebView instance
         NSRect frame = NSMakeRect(100, 0, 400, 800);
         webView = [[WebView alloc] initWithFrame:frame frameName : @"myWV" groupName : @"webViews"];
@@ -395,7 +402,6 @@ public:
         // bring window to front(required only when launching binary executable from command line)
         [window makeKeyAndOrderFront : nil];
         [window setOrderedIndex:0];
-        [window setLevel:NSStatusWindowLevel];
 
         assert(wd != 0);
         [webView setWantsLayer : YES];
@@ -420,7 +426,7 @@ public:
 
         // intialize AppDelegate
         wd->wb_ = &wb;
-        //std::cout << "OPEN:" << &wd << ":" << &wb << std::endl;
+        std::cout << "OPEN:" << &wd << ":" << &wb << std::endl;
 
         return true;
     }
@@ -431,7 +437,7 @@ public:
         NSURLRequest *request = [NSURLRequest requestWithURL : url];
         assert(request != nullptr);
         [webView.mainFrame loadRequest : request];
-        //std::cout << "LOADED:" << std::endl;
+        std::cout << "LOADED:" << getCString(ustr) << std::endl;
     }
 
     inline void go(const std::string& surl) {
@@ -451,8 +457,9 @@ public:
         auto wso = [webView windowScriptObject];
         NSString* evalScriptString = [NSString stringWithUTF8String : jstr.c_str()];
         std::cout << "EVAL:" << std::string([evalScriptString UTF8String]) << std::endl;
-        /*id x = */[wso evaluateWebScript : evalScriptString];
-        //std::cout << x << std::endl;
+        id x = [wso evaluateWebScript : evalScriptString];
+        (void)x;
+        //std::cout << "EVAL_RES:" << x << std::endl;
     }
 
     inline void addNativeObject(s::js::objectbase& jo, WebScriptObject* wso, const std::string& body) {
@@ -460,7 +467,7 @@ public:
         wob->jo_ = &jo;
         wob->wb_ = &wb;
         assert(wso != 0);
-        NSString *pstr = getNSString(jo.name);
+        NSString *pstr = getNSString(jo.nname);
         [wso setValue : wob forKey : pstr];
         eval(body);
     }
@@ -498,7 +505,7 @@ public:
     assert((wd != nullptr) && (wd->wb_ != nullptr));
     auto cpath = getCString(pathString);
     auto& data = wd->wb_->impl().getEmbeddedSource(cpath);
-//    std::cout << "DATA:[" << std::get<0>(data) << "]" << std::endl;
+    std::cout << "DATA:[" << std::get<0>(data) << "]" << std::endl;
 
     NSString *mimeType = getNSString(std::get<2>(data));
     NSURLResponse *response = [[NSURLResponse alloc] initWithURL:url MIMEType:mimeType expectedContentLength:-1 textEncodingName:nil];
@@ -519,7 +526,7 @@ public:
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
-//    std::cout << "applicationDidFinishLaunching" << std::endl;
+    std::cout << "applicationDidFinishLaunching" << std::endl;
     if ([NSURLProtocol registerClass:[EmbeddedURLProtocol class]]) {
         //NSLog(@"URLProtocol registration successful.");
     } else {
@@ -560,7 +567,7 @@ public:
 }
 
 -(void)webView:(WebView *)webView windowScriptObjectAvailable : (WebScriptObject *)wso {
-//    std::cout << "windowScriptObjectAvailable" << std::endl;
+    std::cout << "windowScriptObjectAvailable" << std::endl;
 
     assert(wb_);
     addCommonPage(*wb_);
