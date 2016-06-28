@@ -399,10 +399,6 @@ public:
         setDefaultMenu();
 #endif
 
-        // bring window to front(required only when launching binary executable from command line)
-        [window makeKeyAndOrderFront : nil];
-        [window setOrderedIndex:0];
-
         assert(wd != 0);
         [webView setWantsLayer : YES];
         [webView setCanDrawConcurrently : YES];
@@ -423,6 +419,9 @@ public:
         // set webView as content of top-level window
         assert(window != nullptr);
         [window setContentView : webView];
+
+        // bring window to front(required only when launching binary executable from command line)
+        [NSApp activateIgnoringOtherApps:YES];
 
         // intialize AppDelegate
         wd->wb_ = &wb;
