@@ -34,6 +34,8 @@
 #ifdef WUI_NDK
 #include <jni.h>
 #include <android/log.h>
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
 #endif
 
 namespace {
@@ -1497,6 +1499,7 @@ namespace {
     static std::string _s_datadir;
     static ::jobject _s_activity = 0;
     static ::jclass _s_activityCls = 0;
+    static ::jobject _s_assetManager = 0;
     static ::jmethodID _s_setObjectFn = 0;
     static ::jmethodID _s_goEmbeddedFn = 0;
     static ::jmethodID _s_goStandardFn = 0;
@@ -1746,7 +1749,7 @@ extern "C" {
         return JNI_VERSION_1_6;
     }
 
-    JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initNative(JNIEnv* env, jobject activity, jstring jtag, jobjectArray jparams) {
+    JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initNative(JNIEnv* env, jobject activity, jstring jtag, jobjectArray jparams, jobject assetManager) {
         jclass activityCls = env->FindClass("com/renjipanicker/wui");
         if (!activityCls) {
             throw std::runtime_error(std::string("unable to obtain wui class"));
@@ -1771,6 +1774,7 @@ extern "C" {
 
         _s_tag = convertJniStringToStdString(env, jtag);
         _s_activity = reinterpret_cast<jobject>(env->NewGlobalRef(activity));
+        _s_assetManager = reinterpret_cast<jobject>(env->NewGlobalRef(assetManager));
 
         auto params = convertJavaArrayToVector(env, jparams);
         thrd = std::make_unique<std::thread>(mainx, params);
@@ -1892,6 +1896,66 @@ void s::wui::window::eval(const std::string& str) {
 
 void s::wui::window::addNativeObject(s::js::objectbase& jo, const std::string& body) {
     impl_->addNativeObject(jo, body);
+}
+
+////////////////////////////
+std::vector<std::string> s::asset::listFiles(const std::string& src) {
+#if defined(WUI_NDK)
+    struct dir{
+        JniEnvGuard envg;
+        AAssetManager* mgr;
+        AAssetDir* assetDir;
+        inline dir(const std::string& filename){
+            mgr = AAssetManager_fromJava(envg.env, _s_assetManager);
+            assetDir = AAssetManager_openDir(mgr, filename.c_str());
+        }
+
+        inline auto list(){
+            std::vector<std::string> rv;
+            const char* filename = 0;
+            while ((filename = AAssetDir_getNextFileName(assetDir)) != NULL) {
+                rv.push_back(filename);
+            }
+            return rv;
+        }
+        inline ~dir(){
+            AAssetDir_close(assetDir);
+        }
+    };
+
+    dir onx(src);
+    return onx.list();
+#endif
+    std::vector<std::string> rv;
+    return rv;
+}
+
+void s::asset::readFile(const std::string& filename, std::function<bool(const char*, const size_t&)> fn) {
+#if defined(WUI_NDK)
+    struct file{
+        JniEnvGuard envg;
+        AAssetManager* mgr;
+        AAsset* asset;
+        inline file(const std::string& filename){
+            mgr = AAssetManager_fromJava(envg.env, _s_assetManager);
+            asset = AAssetManager_open(mgr, filename.c_str(), AASSET_MODE_STREAMING);
+        }
+
+        void readAll(std::function<bool(const char*, const size_t&)>& fn){
+            char buf[BUFSIZ];
+            int nb_read = 0;
+            while ((nb_read = AAsset_read(asset, buf, BUFSIZ)) > 0){
+                fn(buf, nb_read);
+            }
+        }
+        inline ~file(){
+            AAsset_close(asset);
+        }
+    };
+
+    file onx(filename);
+    onx.readAll(fn);
+#endif
 }
 
 ////////////////////////////

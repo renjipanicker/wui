@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.lang.Thread;
 import android.provider.Settings.Secure;
 import android.graphics.Bitmap;
+import android.content.res.AssetManager;
 
 import android.webkit.WebView;
 import android.os.Handler;
@@ -37,7 +38,7 @@ public class wui {
     private Handler mainHandler;
     private nproxy consoleobj = null;
 
-    private native void initNative(String tag, String[] params);
+    private native void initNative(String tag, String[] params, AssetManager assetManager);
     private native void exitNative();
     private native void initPage(String url);
     private native void invokeNative(String obj, String fn, String[] params);
@@ -55,7 +56,7 @@ public class wui {
 
     private ArrayList<JsObject> jsoList = new ArrayList<JsObject>();
 
-    public wui(String tg, WebView wv, Handler mh, String[] params) {
+    public wui(String tg, WebView wv, Handler mh, String[] params, AssetManager assetManager) {
         this.TAG = tg;
         this.webView = wv;
         this.mainHandler = mh;
@@ -92,7 +93,7 @@ public class wui {
 		    }
 		});
 
-        initNative(TAG, params);
+        initNative(TAG, params, assetManager);
     }
 
     public void onDestroy() {

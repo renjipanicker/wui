@@ -540,6 +540,18 @@ namespace s {
         };
     } // wui
 
+    /////////////////////////////////////////////////////////////////////
+    /// \brief asset abstraction
+    class asset {
+    public:
+        /// \brief list assets in src/
+        static std::vector<std::string> listFiles(const std::string& src);
+
+        /// \brief read file
+        static void readFile(const std::string& filename, std::function<bool(const char*, const size_t&)> fn);
+    }; // asset
+
+    /////////////////////////////////////////////////////////////////////
     /// \brief application main loop, instance checker, etc
     class application {
     public:
