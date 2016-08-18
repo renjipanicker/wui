@@ -1699,13 +1699,6 @@ public:
     }
 
     inline int loop() {
-        auto& app = this->app;
-        post([&app](){
-            if(app.onInit){
-                app.onInit();
-            }
-        });
-
         // wait for done to be true
         ALOG("enter loop");
         while(!done){
@@ -1778,6 +1771,16 @@ extern "C" {
 
         auto params = convertJavaArrayToVector(env, jparams);
         thrd = std::make_unique<std::thread>(mainx, params);
+    }
+
+    JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initWindow(JNIEnv* env, jobject activity) {
+        if(_s_impl != nullptr){
+            _s_impl->post([](){
+                if(s::app().onInit){
+                    s::app().onInit();
+                }
+            });
+        }
     }
 
     JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initPage(JNIEnv* env, jobject activity, jstring jurl) {

@@ -40,6 +40,7 @@ public class wui {
 
     private native void initNative(String tag, String[] params, AssetManager assetManager);
     private native void exitNative();
+    private native void initWindow();
     private native void initPage(String url);
     private native void invokeNative(String obj, String fn, String[] params);
 
@@ -56,8 +57,7 @@ public class wui {
 
     private ArrayList<JsObject> jsoList = new ArrayList<JsObject>();
 
-    public wui(String tg, WebView wv, Handler mh, String[] params, AssetManager assetManager) {
-        this.TAG = tg;
+    public void connect(WebView wv, Handler mh) {
         this.webView = wv;
         this.mainHandler = mh;
         webView.getSettings().setJavaScriptEnabled(true);
@@ -92,7 +92,17 @@ public class wui {
                 Log.d(TAG, "pfinish:" + url);
 		    }
 		});
+        initWindow();
+        Log.d(TAG, "connected");
+    }
 
+    public void disconnect() {
+        this.webView = null;
+        this.mainHandler = null;
+    }
+
+    public wui(String tg, String[] params, AssetManager assetManager) {
+        this.TAG = tg;
         initNative(TAG, params, assetManager);
     }
 
@@ -123,6 +133,10 @@ public class wui {
     }
 
     public void go_embedded(final String url, final String data, final String mimetype) {
+        if(mainHandler == null){
+            Log.d(TAG, "mainHandler is empty in go_embedded:" + url);
+            return;
+        }
         mainHandler.post(new Runnable() {
             public void run() {
                 insertObjects();
@@ -134,6 +148,10 @@ public class wui {
     }
 
     public void go_standard(final String url) {
+        if(mainHandler == null){
+            Log.d(TAG, "mainHandler is empty in go_standard:" + url);
+            return;
+        }
         mainHandler.post(new Runnable() {
             public void run() {
                 insertObjects();
