@@ -431,7 +431,6 @@ public:
 
         // intialize AppDelegate
         wd->wb_ = &wb;
-        std::cout << "OPEN:" << &wd << ":" << &wb << std::endl;
 
         return true;
     }
@@ -442,7 +441,6 @@ public:
         NSURLRequest *request = [NSURLRequest requestWithURL : url];
         assert(request != nullptr);
         [webView.mainFrame loadRequest : request];
-        std::cout << "LOADED:" << getCString(ustr) << std::endl;
     }
 
     inline void go(const std::string& surl) {
@@ -461,10 +459,8 @@ public:
         auto jstr = jspfx + str;
         auto wso = [webView windowScriptObject];
         NSString* evalScriptString = [NSString stringWithUTF8String : jstr.c_str()];
-        std::cout << "EVAL:" << std::string([evalScriptString UTF8String]) << std::endl;
         id x = [wso evaluateWebScript : evalScriptString];
         (void)x;
-        //std::cout << "EVAL_RES:" << x << std::endl;
     }
 
     inline void addNativeObject(s::js::objectbase& jo, WebScriptObject* wso, const std::string& body) {
@@ -510,7 +506,6 @@ public:
     assert((wd != nullptr) && (wd->wb_ != nullptr));
     auto cpath = getCString(pathString);
     auto& data = wd->wb_->impl().getEmbeddedSource(cpath);
-    std::cout << "DATA:[" << std::get<0>(data) << "]" << std::endl;
 
     NSString *mimeType = getNSString(std::get<2>(data));
     NSURLResponse *response = [[NSURLResponse alloc] initWithURL:url MIMEType:mimeType expectedContentLength:-1 textEncodingName:nil];
@@ -531,7 +526,6 @@ public:
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
-    std::cout << "applicationDidFinishLaunching" << std::endl;
     if ([NSURLProtocol registerClass:[EmbeddedURLProtocol class]]) {
         //NSLog(@"URLProtocol registration successful.");
     } else {
@@ -572,8 +566,6 @@ public:
 }
 
 -(void)webView:(WebView *)webView windowScriptObjectAvailable : (WebScriptObject *)wso {
-    std::cout << "windowScriptObjectAvailable" << std::endl;
-
     assert(wb_);
     addCommonPage(*wb_);
     if (wb_->onLoad) {
@@ -768,12 +760,9 @@ HRESULT STDMETHODCALLTYPE WinObject::GetIDsOfNames(REFIID /*riid*/,
 inline std::string VariantToString(VARIANTARG& var) {
     assert(var.vt == VT_BSTR);
     _bstr_t bstrArg = var.bstrVal;
-    std::cout << (long)(const wchar_t*)bstrArg << std::endl;
     std::wstring arg = (const wchar_t*)bstrArg;
-    std::wcout << "WGET:" << arg << std::endl << std::endl;
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
     auto rv = std::string(convertor.to_bytes(arg));
-    std::cout << "GET:[" << rv << "]" << std::endl;
     return rv;
 }
 
@@ -846,7 +835,6 @@ inline std::vector<std::string> getStringArrayFromCOM(DISPPARAMS* dp, const size
             return rv;
         }
         auto item = VariantToString(varItem);
-        std::cout << "ITEM:" << item << std::endl;
         rv.push_back(item);
     }
 
@@ -867,11 +855,8 @@ HRESULT STDMETHODCALLTYPE WinObject::Invoke(
     if (wFlags & DISPATCH_METHOD) {
         if (dispIdMember == DISPID_VALUE + 1) {
             auto params = getStringArrayFromCOM(pDispParams, 0);
-//            std::cout << "PARAMS:" << params << std::endl;
             auto fn = getStringFromCOM(pDispParams, 1);
-            std::cout << "FN:" << fn << std::endl;
             auto obj = getStringFromCOM(pDispParams, 2);
-            std::cout << "OBJ:" << obj << std::endl;
             wb_.invoke(obj, fn, params);
             return S_OK;
         }
