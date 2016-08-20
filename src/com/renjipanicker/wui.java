@@ -27,9 +27,10 @@ public class wui {
         public nproxy(String n) {
             this.name = n;
         }
+
         @JavascriptInterface
-        public void invoke(String fn, String[] params) {
-            invokeNative(name, fn, params);
+        public String invoke(String fn, String[] params) {
+            return invokeNative(name, fn, params);
         }
     };
 
@@ -42,7 +43,7 @@ public class wui {
     private native void exitNative();
     private native void initWindow();
     private native void initPage(String url);
-    private native void invokeNative(String obj, String fn, String[] params);
+    private native String invokeNative(String obj, String fn, String[] params);
 
     class JsObject {
         public String name;

@@ -84,7 +84,7 @@ namespace s {
             }
 
             static inline auto convertToJS(conversion_context& ctx, const std::string& t) {
-                return t;
+                return "\"" + t + "\"";
             }
 
             static inline std::string getJsTypeName() {

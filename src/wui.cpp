@@ -84,7 +84,11 @@ namespace {
         "  if(!val) {\n"
         "    return val;\n"
         "  }\n"
-        "  nval = eval(val);\n"
+        "  try{\n"
+        "    nval = eval(val);\n"
+        "  }catch(ex){\n"
+        "    return \"<err>\"\n"
+        "  }\n"
         "  return nval;\n"
         "}\n"
         ;
@@ -1548,6 +1552,10 @@ namespace {
         JniStringGuard sg(env, jstr);
         return sg.str;
     }
+
+    inline jstring convertStdStringToJniString(JNIEnv* env, const std::string& str){
+        return env->NewStringUTF(str.c_str());
+    }
 }
 
 class s::wui::window::Impl {
@@ -1802,18 +1810,28 @@ extern "C" {
         }
     }
 
-    JNIEXPORT void JNICALL Java_com_renjipanicker_wui_invokeNative(JNIEnv* env, jobject activity, jstring jobj, jstring jfn, jobjectArray jparams) {
+    JNIEXPORT jstring JNICALL Java_com_renjipanicker_wui_invokeNative(JNIEnv* env, jobject activity, jstring jobj, jstring jfn, jobjectArray jparams) {
         const std::string obj = convertJniStringToStdString(env, jobj);
         const std::string fn = convertJniStringToStdString(env, jfn);
+        std::string rv = "";
 
         auto params = convertJavaArrayToVector(env, jparams);
         if(_s_impl != nullptr){
-            _s_impl->post([obj, fn, params](){
+            std::mutex m;
+            std::condition_variable cv;
+            std::unique_lock<std::mutex> lk(m);
+
+            _s_impl->post([obj, fn, params, &rv, &cv, &m](){
+                std::lock_guard<std::mutex> lk(m);
                 if(_s_wimpl != nullptr){
-                    _s_wimpl->invoke(obj, fn, params);
+                    rv = _s_wimpl->invoke(obj, fn, params);
                 }
+                cv.notify_one();
             });
+
+            cv.wait(lk);
         }
+        return convertStdStringToJniString(env, rv);
     }
 } // extern "C"
 
