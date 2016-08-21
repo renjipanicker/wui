@@ -195,7 +195,7 @@ namespace s {
             os << ss.str() << std::endl;
             os << "    var vv = this.__nobj__.invoke('" << name << "', rv);" << std::endl;
             os << "    return _wui_convertFromNative(vv);" << std::endl;
-            os << "  }";
+            os << "  };";
             return os.str();
         }
 
