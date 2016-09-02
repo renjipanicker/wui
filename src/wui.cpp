@@ -459,8 +459,9 @@ public:
         auto jstr = jspfx + str;
         auto wso = [webView windowScriptObject];
         NSString* evalScriptString = [NSString stringWithUTF8String : jstr.c_str()];
-        id x = [wso evaluateWebScript : evalScriptString];
-        (void)x;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [wso evaluateWebScript : evalScriptString];
+        });
     }
 
     inline void addNativeObject(s::js::objectbase& jo, WebScriptObject* wso, const std::string& body) {
