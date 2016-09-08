@@ -1939,29 +1939,77 @@ std::vector<std::string> s::asset::listFiles(const std::string& src) {
 
 void s::asset::readFile(const std::string& filename, std::function<bool(const char*, const size_t&)> fn) {
 #if defined(WUI_NDK)
-    struct file{
-        JniEnvGuard envg;
-        AAssetManager* mgr;
-        AAsset* asset;
-        inline file(const std::string& filename){
-            mgr = AAssetManager_fromJava(envg.env, _s_assetManager);
-            asset = AAssetManager_open(mgr, filename.c_str(), AASSET_MODE_STREAMING);
-        }
-
-        void readAll(std::function<bool(const char*, const size_t&)>& fn){
-            char buf[BUFSIZ];
-            int nb_read = 0;
-            while ((nb_read = AAsset_read(asset, buf, BUFSIZ)) > 0){
-                fn(buf, nb_read);
-            }
-        }
-        inline ~file(){
-            AAsset_close(asset);
-        }
-    };
-
     file onx(filename);
+    if(!onx){
+        return;
+    }
     onx.readAll(fn);
+#endif
+}
+
+#if defined(WUI_NDK)
+struct s::asset::file::Impl {
+    JniEnvGuard envg;
+    AAssetManager* mgr;
+    AAsset* asset;
+    inline Impl(const std::string& filename) {
+        mgr = AAssetManager_fromJava(envg.env, _s_assetManager);
+        asset = AAssetManager_open(mgr, filename.c_str(), AASSET_MODE_STREAMING);
+    }
+
+    inline int read(char* buf, const size_t& len) {
+        return AAsset_read(asset, buf, len);
+    }
+
+    inline void readAll(std::function<bool(const char*, const size_t&)>& fn){
+        char buf[BUFSIZ];
+        int nb_read = 0;
+        while ((nb_read = read(buf, BUFSIZ)) > 0){
+            fn(buf, nb_read);
+        }
+    }
+
+    inline bool valid() const {
+        return (asset != 0);
+    }
+
+    inline ~Impl() {
+        AAsset_close(asset);
+    }
+};
+#else
+struct s::asset::file::Impl {
+};
+#endif
+
+s::asset::file::file(const std::string& filename, std::ios_base::openmode) {
+#if defined(WUI_NDK)
+    impl_ = std::make_unique<Impl>(filename);
+#endif
+}
+
+s::asset::file::~file() {
+}
+
+int s::asset::file::read(char* buf, const size_t& len) {
+#if defined(WUI_NDK)
+    return impl_->read(buf, len);
+#else
+    return -1;
+#endif
+}
+
+void s::asset::file::readAll(std::function<bool(const char*, const size_t&)>& fn) {
+#if defined(WUI_NDK)
+    return impl_->readAll(fn);
+#endif
+}
+
+bool s::asset::file::valid() const {
+#if defined(WUI_NDK)
+    return impl_->valid();
+#else
+    return false;
 #endif
 }
 

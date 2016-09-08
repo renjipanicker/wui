@@ -544,6 +544,21 @@ namespace s {
     /// \brief asset abstraction
     class asset {
     public:
+        /// \brief asset stream
+        class file {
+            struct Impl;
+            std::unique_ptr<Impl> impl_;
+        public:
+            file(const std::string& filename, std::ios_base::openmode mode = std::ios_base::in);
+            ~file();
+            int read(char* buf, const size_t& len);
+            void readAll(std::function<bool(const char*, const size_t&)>& fn);
+            bool valid() const;
+            inline operator bool() const {
+                return valid();
+            }
+        };
+
         /// \brief list assets in src/
         static std::vector<std::string> listFiles(const std::string& src);
 
