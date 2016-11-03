@@ -427,6 +427,7 @@ public:
         [window setContentView : webView];
 
         // bring window to front(required only when launching binary executable from command line)
+        [window makeKeyAndOrderFront:window];
         [NSApp activateIgnoringOtherApps:YES];
 
         // intialize AppDelegate
@@ -549,14 +550,14 @@ public:
 }
 
 - (void) webView:(WebView*)webView addMessageToConsole:(NSDictionary*)message {
-	if (![message isKindOfClass:[NSDictionary class]]) {
-		return;
-	}
+    if (![message isKindOfClass:[NSDictionary class]]) {
+        return;
+    }
 
-	NSLog(@"JavaScript console: %@:%@: %@",
-		  [[message objectForKey:@"sourceURL"] lastPathComponent],	// could be nil
-		  [message objectForKey:@"lineNumber"],
-		  [message objectForKey:@"message"]);
+    NSLog(@"JavaScript console: %@:%@: %@",
+          [[message objectForKey:@"sourceURL"] lastPathComponent],	// could be nil
+          [message objectForKey:@"lineNumber"],
+          [message objectForKey:@"message"]);
 }
 
 -(void)webView:(WebView *)sender runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WebFrame *)frame {
