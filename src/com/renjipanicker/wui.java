@@ -1,11 +1,15 @@
 package com.renjipanicker;
 
 import java.util.ArrayList;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.lang.Thread;
 import android.provider.Settings.Secure;
 import android.graphics.Bitmap;
 import android.content.res.AssetManager;
 
+import android.content.Intent;
+import android.net.Uri;
 import android.webkit.WebView;
 import android.os.Handler;
 import android.os.Looper;
@@ -44,6 +48,7 @@ public class wui {
     private native void initWindow();
     private native void initPage(String url);
     private native String invokeNative(String obj, String fn, String[] params);
+    private native Object[] getPageData(String url);
 
     class JsObject {
         public String name;
@@ -87,14 +92,41 @@ public class wui {
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 Log.d(TAG, "pstart:" + url);
-		    }
+            }
             @Override
             public void onPageFinished(WebView view, String url) {
                 Log.d(TAG, "pfinish:" + url);
-		    }
-		});
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+                Log.d(TAG, "shouldInterceptRequest:" + url);
+                final Uri uri = Uri.parse(url);
+                final String scheme = uri.getScheme();
+                if (scheme.equals("embedded")) {
+                    String path = uri.getHost();
+                    Object data[] = getPageData(path);
+                    if(data != null){
+                        String mim = (String)data[0];
+                        byte[] dat = (byte[])data[1];
+                        ByteArrayInputStream is = new ByteArrayInputStream(dat);
+                        String enc = "UTF-8";
+                        if(mim.equals("image/png")){
+                            enc = "binary";
+                        }
+                        Log.d(TAG, "shouldInterceptRequest0:[" + path + "]:" + mim + ":" + enc);
+                        return new WebResourceResponse(mim, enc, is);
+                    }else{
+                        Log.d(TAG, "no-data:" + url);
+                    }
+
+                }
+                Log.d(TAG, "no-embedded:" + scheme);
+                return null;
+            }
+        });
         initWindow();
-        Log.d(TAG, "connected");
+        //Log.d(TAG, "connected");
     }
 
     public void disconnect() {
@@ -141,7 +173,8 @@ public class wui {
         mainHandler.post(new Runnable() {
             public void run() {
                 insertObjects();
-                webView.loadDataWithBaseURL("embedded:", data, mimetype, "utf-8", null);
+//                Log.d(TAG, data);
+                webView.loadDataWithBaseURL("embedded://", data, mimetype, "utf-8", null);
                 insertObjectBody();
                 initPage(url);
             }

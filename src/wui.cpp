@@ -1820,6 +1820,26 @@ extern "C" {
         }
         return convertStdStringToJniString(env, rv);
     }
+
+    JNIEXPORT jobjectArray JNICALL Java_com_renjipanicker_wui_getPageData(JNIEnv* env, jobject activity, jstring jurl) {
+        const std::string url = convertJniStringToStdString(env, jurl);
+        if(_s_wimpl == nullptr){
+            return 0;
+        }
+
+        auto& data = _s_wimpl->getEmbeddedSource(url);
+        jstring jmimetype = env->NewStringUTF(std::get<2>(data).c_str());
+        auto len = std::get<1>(data);
+        jbyteArray jstr = env->NewByteArray(len);
+        env->SetByteArrayRegion(jstr, 0, len, (const jbyte*)std::get<0>(data));
+
+        jobjectArray ret = (jobjectArray)env->NewObjectArray(2, env->FindClass("java/lang/Object"), 0);
+        env->SetObjectArrayElement(ret,0,jmimetype);
+        env->SetObjectArrayElement(ret,1,jstr);
+
+        return ret;
+    }
+
 } // extern "C"
 
 #endif // WUI_NDK
