@@ -91,16 +91,16 @@ public class wui {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
-                Log.d(TAG, "pstart:" + url);
+                //Log.d(TAG, "pstart:" + url);
             }
             @Override
             public void onPageFinished(WebView view, String url) {
-                Log.d(TAG, "pfinish:" + url);
+                //Log.d(TAG, "pfinish:" + url);
             }
 
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
-                Log.d(TAG, "shouldInterceptRequest:" + url);
+                //Log.d(TAG, "shouldInterceptRequest:" + url);
                 final Uri uri = Uri.parse(url);
                 final String scheme = uri.getScheme();
                 if (scheme.equals("embedded")) {
@@ -114,14 +114,10 @@ public class wui {
                         if(mim.equals("image/png")){
                             enc = "binary";
                         }
-                        Log.d(TAG, "shouldInterceptRequest0:[" + path + "]:" + mim + ":" + enc);
                         return new WebResourceResponse(mim, enc, is);
-                    }else{
-                        Log.d(TAG, "no-data:" + url);
                     }
 
                 }
-                Log.d(TAG, "no-embedded:" + scheme);
                 return null;
             }
         });
