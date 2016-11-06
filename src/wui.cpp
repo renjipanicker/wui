@@ -458,9 +458,9 @@ public:
 
     inline void eval(const std::string& str) {
         auto jstr = jspfx + str;
-        auto wso = [webView windowScriptObject];
         NSString* evalScriptString = [NSString stringWithUTF8String : jstr.c_str()];
         dispatch_async(dispatch_get_main_queue(), ^{
+            auto wso = [webView windowScriptObject];
             [wso evaluateWebScript : evalScriptString];
         });
     }
@@ -507,6 +507,9 @@ public:
     auto wd = (AppDelegate*)[app delegate];
     assert((wd != nullptr) && (wd->wb_ != nullptr));
     auto cpath = getCString(pathString);
+    while(cpath.at(0) == '/'){
+        cpath = cpath.substr(1);
+    }
     auto& data = wd->wb_->impl().getEmbeddedSource(cpath);
 
     NSString *mimeType = getNSString(std::get<2>(data));
