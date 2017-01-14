@@ -31,7 +31,7 @@ namespace s {
                 return DerT::convertFromJS(ctx.args.at(idx++));
             }
 
-            static inline auto convertToJS(conversion_context& ctx, const T& t) {
+            static inline auto convertToJS(conversion_context& /*ctx*/, const T& t) {
                 std::ostringstream ss;
                 ss << t;
                 return ss.str();
@@ -64,7 +64,7 @@ namespace s {
                 return false;
             }
 
-            static inline std::string convertToJS(conversion_context& ctx, const bool& t) {
+            static inline std::string convertToJS(conversion_context& /*ctx*/, const bool& t) {
                 if(t){
                     return "true";
                 }
@@ -83,7 +83,7 @@ namespace s {
                 return rv;
             }
 
-            static inline auto convertToJS(conversion_context& ctx, const std::string& t) {
+            static inline auto convertToJS(conversion_context& /*ctx*/, const std::string& t) {
                 return "\"" + t + "\"";
             }
 
@@ -118,7 +118,7 @@ namespace s {
                 return rv;
             }
 
-            static inline auto convertToJS(conversion_context& ctx, const std::vector<T>& t) {
+            static inline auto convertToJS(conversion_context& /*ctx*/, const std::vector<T>& t) {
                 std::string sep;
                 std::string rv = "[";
                 for(auto& v : t){
@@ -153,7 +153,7 @@ namespace s {
         /////////////////////////////////////////////////
         /// T: decay'ed type
         template <typename T>
-        static inline auto getParamStatement(const size_t& idx, const std::string& t, std::ostringstream& ss){
+        static inline auto getParamStatement(const size_t& idx, const std::string& /*t*/, std::ostringstream& ss){
             std::ostringstream ts;
             ts << "p" << idx;
             auto var = ts.str();

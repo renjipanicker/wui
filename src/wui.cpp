@@ -39,6 +39,9 @@
 #endif
 
 namespace {
+    template<typename T>
+    inline void unused(const T&){}
+
     const std::string jspfx = "javascript:";
     const std::string empfx = "embedded:";
     struct ContentSourceData {
@@ -234,6 +237,7 @@ class s::application::Impl {
     s::application& app_;
 public:
     inline Impl(s::application& a) : app_(a) {
+        unused(app_);
     }
 
     inline ~Impl() {
@@ -254,7 +258,7 @@ public:
 #endif
     }
 
-    inline void exit(const int& exitcode) {
+    inline void exit(const int& /*exitcode*/) {
         [NSApp performSelector:@selector(terminate:) withObject:nil afterDelay:0.0];
     }
 
@@ -275,7 +279,8 @@ public:
 };
 
 /////////////////////////////////
-class s::wui::window::Impl {
+struct s::wui::window::Impl {
+private:
     s::wui::window& wb;
     NSWindow* window;
     WebView* webView;
@@ -304,7 +309,7 @@ public:
             [menuItem setKeyEquivalent:keyEq];
         }
         if(fn){
-            [menuItem setBlockAction:^(id sender) {
+            [menuItem setBlockAction:^(id /*sender*/) {
                 fn();
             }];
         }
@@ -531,6 +536,7 @@ public:
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
+    unused(aNotification);
     if ([NSURLProtocol registerClass:[EmbeddedURLProtocol class]]) {
         //NSLog(@"URLProtocol registration successful.");
     } else {
@@ -549,10 +555,12 @@ public:
 }
 
 -(BOOL)applicationShouldTerminateAfterLastWindowClosed : (NSApplication *)theApplication {
+    unused(theApplication);
     return YES;
 }
 
 - (void) webView:(WebView*)webView addMessageToConsole:(NSDictionary*)message {
+    unused(webView);
     if (![message isKindOfClass:[NSDictionary class]]) {
         return;
     }
@@ -564,6 +572,8 @@ public:
 }
 
 -(void)webView:(WebView *)sender runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WebFrame *)frame {
+    unused(sender);
+    unused(frame);
     NSAlert *alert = [[NSAlert alloc] init];
     [alert addButtonWithTitle:@"OK"];
     [alert setMessageText:message];
@@ -571,6 +581,8 @@ public:
 }
 
 -(void)webView:(WebView *)webView windowScriptObjectAvailable : (WebScriptObject *)wso {
+    unused(wso);
+    unused(webView);
     assert(wb_);
     addCommonPage(*wb_);
     if (wb_->onLoad) {
@@ -1956,6 +1968,8 @@ std::vector<std::string> s::asset::listFiles(const std::string& src) {
 
     dir onx(src);
     return onx.list();
+#else
+    unused(src);
 #endif
     std::vector<std::string> rv;
     return rv;
@@ -1968,6 +1982,9 @@ void s::asset::readFile(const std::string& filename, std::function<bool(const ch
         return;
     }
     onx.readAll(fn);
+#else
+    unused(filename);
+    unused(fn);
 #endif
 }
 
@@ -2009,6 +2026,8 @@ struct s::asset::file::Impl {
 s::asset::file::file(const std::string& filename, std::ios_base::openmode) {
 #if defined(WUI_NDK)
     impl_ = std::make_unique<Impl>(filename);
+#else
+    unused(filename);
 #endif
 }
 
@@ -2019,6 +2038,8 @@ int s::asset::file::read(char* buf, const size_t& len) {
 #if defined(WUI_NDK)
     return impl_->read(buf, len);
 #else
+    unused(buf);
+    unused(len);
     return -1;
 #endif
 }
@@ -2026,6 +2047,8 @@ int s::asset::file::read(char* buf, const size_t& len) {
 void s::asset::file::readAll(std::function<bool(const char*, const size_t&)>& fn) {
 #if defined(WUI_NDK)
     return impl_->readAll(fn);
+#else
+    unused(fn);
 #endif
 }
 
