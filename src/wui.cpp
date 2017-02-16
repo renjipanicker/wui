@@ -38,6 +38,21 @@
 #include <android/asset_manager_jni.h>
 #endif
 
+// NDK-specific includes
+#ifdef WUI_WIN
+#include <windows.h>
+#include <shlobj.h>
+#include <atlbase.h>
+#include <comutil.h>
+#include <mshtmhst.h>
+#include <mshtmdid.h>
+#include <MsHTML.h>
+#include <ExDispId.h>
+
+#include <locale>
+#include <codecvt>
+#endif
+
 namespace {
     template<typename T>
     inline void unused(const T&){}
@@ -599,34 +614,38 @@ public:
 //#pragma comment( linker, "/subsystem:console" )
 
 namespace {
-#if 1
+#if 0
 #define TRACER(n) s::ftracer _t_(n)
 #else
 #define TRACER(n)
 #endif
-#if 1
+#if 0
 #define TRACER1(n) s::ftracer _t1_(n)
 #else
 #define TRACER1(n)
 #endif
 
-    //Returns the last Win32 error, in string format. Returns an empty string if there is no error.
+	inline std::string GetErrorAsString(HRESULT hr) {
+		LPSTR messageBuffer = nullptr;
+		size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+			NULL, hr, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+
+		std::string message(messageBuffer, size);
+
+		//Free the buffer.
+		LocalFree(messageBuffer);
+
+		return message;
+	}
+	
+	//Returns the last Win32 error, in string format. Returns an empty string if there is no error.
     inline std::string GetLastErrorAsString() {
         //Get the error message, if any.
         DWORD errorMessageID = ::GetLastError();
         if (errorMessageID == 0)
             return std::string(); //No error message has been recorded
 
-        LPSTR messageBuffer = nullptr;
-        size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
-
-        std::string message(messageBuffer, size);
-
-        //Free the buffer.
-        LocalFree(messageBuffer);
-
-        return message;
+		return GetErrorAsString(errorMessageID);
     }
 }
 
@@ -636,7 +655,7 @@ public:
     inline Impl(s::application& a) : app(a) {
         ::_tzset();
         if (::OleInitialize(NULL) != S_OK) {
-            throw s::exception(s::argl("OleInitialize() failed: %m").arg("m", GetLastErrorAsString()));
+			throw std::runtime_error(std::string("OleInitialize() failed:") + GetLastErrorAsString());
         }
 
         char apath[MAX_PATH];
@@ -644,11 +663,15 @@ public:
         if (rv == 0) {
             DWORD ec = GetLastError();
             assert(ec != ERROR_SUCCESS);
-            throw s::exception(s::argl("Internal error retrieving process path: %m").arg("m", GetLastErrorAsString()));
+			throw std::runtime_error(std::string("Internal error retrieving process path:") + GetLastErrorAsString());
         }
 
         app.path = apath;
-        app.name = s::filesystem::basename(app.path);
+		char *ptr = strrchr(apath, '\\');
+		if (ptr != NULL)
+			strcpy_s(apath, MAX_PATH, ptr + 1);
+
+        app.name = apath;
     }
 
     inline ~Impl() {
@@ -661,15 +684,15 @@ public:
         ::PostQuitMessage(exitcode);
     }
 
-    inline std::string datadir(const std::string& an) const {
-        z::char_t chPath[MAX_PATH];
+    inline std::string datadir(const std::string& /*an*/) const {
+        char chPath[MAX_PATH];
         /// \todo Use SHGetKnownFolderPath for vista and later.
         HRESULT hr = ::SHGetFolderPathA(NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, chPath);
         if(!SUCCEEDED(hr)) {
-            throw s::exception(s::argl("Internal error retrieving data directory: %{s}").arg("s", z::str(hr))));
+			throw std::runtime_error(std::string("Internal error retrieving data directory:") + GetErrorAsString(hr));
         }
-        auto data = z::string(chPath);
-        data.replace("\\", "/");
+		std::string data(chPath);
+        std::replace(data.begin(), data.end(), '\\', '/');
         return data;
     }
 };
@@ -874,7 +897,7 @@ HRESULT STDMETHODCALLTYPE WinObject::Invoke(
             auto params = getStringArrayFromCOM(pDispParams, 0);
             auto fn = getStringFromCOM(pDispParams, 1);
             auto obj = getStringFromCOM(pDispParams, 2);
-            wb_.invoke(obj, fn, params);
+            //wb_.invoke(obj, fn, params);
             return S_OK;
         }
         assert(false);
@@ -889,6 +912,8 @@ const LPCWSTR WEBFORM_CLASS = L"WebUIWindowClass";
 
 struct s::wui::window::Impl : public IUnknown {
     static std::vector<s::wui::window::Impl*> wlist;
+	ContentSourceData csd;
+
     long ref;
     // IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) {
@@ -1067,19 +1092,31 @@ struct s::wui::window::Impl : public IUnknown {
     }
 
     inline void setMenu(const menu& /*m*/) {
-        throw s::exception("Not implemented: setMenu");
+		throw std::runtime_error(std::string("Not implemented: setMenu"));
     }
+
+	inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
+		csd.setEmbeddedSource(lst);
+	}
+
+	inline void setContentSourceResource(const std::string& path) {
+		csd.setResourceSource(path);
+	}
+
+	inline const auto& getEmbeddedSource(const std::string& url) {
+		return csd.getEmbeddedSource(url);
+	}
 
     inline void eval(const std::string& str) {
         CComPtr<IHTMLDocument2> doc = GetDoc();
         if (doc == NULL) {
-            throw s::exception(s::argl("Unable to get document object: %m").arg("m", GetLastErrorAsString()));
+			throw std::runtime_error(std::string("Unable to get document object:") + GetLastErrorAsString());
         }
 
         CComPtr<IHTMLWindow2> win;
         doc->get_parentWindow(&win);
         if (win == NULL) {
-            throw s::exception(s::argl("Unable to get parent window: %m").arg("m", GetLastErrorAsString()));
+			throw std::runtime_error(std::string("Unable to get parent window:") + GetLastErrorAsString());
         }
 
         std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
@@ -1088,14 +1125,17 @@ struct s::wui::window::Impl : public IUnknown {
         VariantInit(&v);
         HRESULT hr = win->execScript((BSTR)rv.c_str(), NULL, &v);
         if (hr != S_OK) {
-            s::log() << "JavaScript execution error: " << str << ":" << hr << std::endl;
+			throw std::runtime_error(std::string("JavaScript execution error:") + GetErrorAsString(hr));
         }
 
         VariantClear(&v);
         ::InvalidateRect(hhost, 0, true);
     }
 
-    std::unique_ptr<WinObject> nproxy_;
+	inline void addNativeObject(s::js::objectbase& jo, const std::string& body) {
+	}
+	
+	std::unique_ptr<WinObject> nproxy_;
     inline void addObject(const std::string& name) {
         TRACER("addObject");
         nproxy_ = std::make_unique<WinObject>(browser_);
@@ -1198,27 +1238,27 @@ bool s::wui::window::Impl::setupOle() {
     CComPtr<IOleObject> iole;
     hr = CoCreateInstance(CLSID_WebBrowser, NULL, CLSCTX_INPROC_SERVER, IID_IOleObject, (void**)&iole);
     if (hr != S_OK) {
-        throw s::exception(s::argl("CoCreateInstance error: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("CoCreateInstance error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     hr = iole->SetClientSite(&clientsite);
     if (hr != S_OK) {
-        throw s::exception(s::argl("SetClientSite error: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("SetClientSite error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     hr = iole->SetHostNames(L"MyHost", L"MyDoc");
     if (hr != S_OK) {
-        throw s::exception(s::argl("SetHostNames error: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("SetHostNames error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     hr = OleSetContainedObject(iole, TRUE);
     if (hr != S_OK) {
-        throw s::exception(s::argl("OleSetContainedObject error: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("OleSetContainedObject error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     hr = iole->DoVerb(OLEIVERB_SHOW, 0, &clientsite, 0, hhost, &rc);
     if (hr != S_OK) {
-        throw s::exception(s::argl("DoVerb error: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("DoVerb error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     bool connected = false;
@@ -1234,7 +1274,7 @@ bool s::wui::window::Impl::setupOle() {
     }
 
     if (!connected) {
-        throw s::exception(s::argl("Not connected error: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("Not connected error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     iole->QueryInterface(IID_IWebBrowser2, (void**)&ibrowser);
@@ -1247,19 +1287,19 @@ void s::wui::window::Impl::addCustomObject(IDispatch* custObj, const std::string
     HRESULT hr;
     CComPtr<IHTMLDocument2> doc = GetDoc();
     if (doc == NULL) {
-        throw s::exception(s::argl("Invalid document state: %m(%e)").arg("m", GetLastErrorAsString()));
+		throw std::runtime_error(std::string("Invalid document state:") + GetLastErrorAsString());
     }
 
     CComPtr<IHTMLWindow2> win;
     hr = doc->get_parentWindow(&win);
     if (win == NULL) {
-        throw s::exception(s::argl("unable to get parent window: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("unable to get parent window:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     CComPtr<IDispatchEx> winEx;
     hr = win->QueryInterface(&winEx);
     if (winEx == NULL) {
-        throw s::exception(s::argl("unable to get DispatchEx: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("unable to get DispatchEx:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     _bstr_t objName(name.c_str());
@@ -1267,7 +1307,7 @@ void s::wui::window::Impl::addCustomObject(IDispatch* custObj, const std::string
     DISPID dispid;
     hr = winEx->GetDispID(objName, fdexNameEnsure, &dispid);
     if (FAILED(hr)) {
-        throw s::exception(s::argl("unable to get DispatchID: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("unable to get DispatchID:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     DISPID namedArgs[] = { DISPID_PROPERTYPUT };
@@ -1281,7 +1321,7 @@ void s::wui::window::Impl::addCustomObject(IDispatch* custObj, const std::string
 
     hr = winEx->InvokeEx(dispid, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &params, NULL, NULL, NULL);
     if (FAILED(hr)) {
-        throw s::exception(s::argl("unable to invoke JSE: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("unable to invoke JSE:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 }
 
@@ -1371,11 +1411,11 @@ bool s::wui::window::Impl::open() {
     }
 
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-    std::wstring title(convertor.from_bytes(wi.title));
+    std::wstring title(convertor.from_bytes(s::app().title));
 
     HWND hWnd = CreateWindowW(WEBFORM_CLASS, title.c_str(), flags, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, (HMENU)id, hInstance, (LPVOID)this);
     if (hWnd == NULL) {
-        throw s::exception(s::argl("Could not create window: %m").arg("m", GetLastErrorAsString()));
+		throw std::runtime_error(std::string("Could not create window:") + GetLastErrorAsString());
     }
     ::ShowWindow(hWnd, SW_SHOW);
     ::UpdateWindow(hWnd);
@@ -1386,6 +1426,7 @@ bool s::wui::window::Impl::open() {
 void s::wui::window::Impl::go(const std::string& urlx) {
     auto url = urlx;
     if (url.substr(0, 4) != "http") {
+		assert(false);
         url = "res://" + s::app().name + ".exe/" + url;
     }
 
@@ -1455,7 +1496,7 @@ IHTMLDocument2 *s::wui::window::Impl::GetDoc() {
     CComPtr<IDispatch> xdispatch;
     HRESULT hr = ibrowser->get_Document(&xdispatch);
     if (xdispatch == 0) {
-        throw s::exception(s::argl("unable to get document: %m(%e)").arg("m", GetLastErrorAsString()).arg("e", hr));
+		throw std::runtime_error(std::string("unable to get document:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     CComPtr<IHTMLDocument2> doc;
