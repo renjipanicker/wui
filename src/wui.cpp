@@ -58,7 +58,8 @@ namespace {
     inline void unused(const T&){}
 
     const std::string jspfx = "javascript:";
-    const std::string empfx = "embedded:";
+    const std::string empfx = "embedded";
+    const std::wstring empfxw = L"embedded";
     struct ContentSourceData {
         s::wui::ContentSourceType type;
         std::string path;
@@ -467,7 +468,7 @@ public:
     inline void go(const std::string& surl) {
         NSString *pstr = getNSString(surl);
         if(csd.type == s::wui::ContentSourceType::Embedded){
-            pstr = getNSString(empfx + surl);
+            pstr = getNSString(empfx + ":" + surl);
         }else if(csd.type == s::wui::ContentSourceType::Resource){
             NSString *resourcesPath = [[NSBundle mainBundle] resourcePath];
             resourcesPath = [resourcesPath stringByAppendingString : getNSString(csd.path)];
@@ -615,38 +616,43 @@ public:
 
 namespace {
 #if 0
-#define TRACER(n) s::ftracer _t_(n)
+#define TRACER(n) std::cout << n << std::endl
 #else
 #define TRACER(n)
 #endif
-#if 0
-#define TRACER1(n) s::ftracer _t1_(n)
+#if 1
+#define TRACER1(n) std::cout << n << std::endl
 #else
 #define TRACER1(n)
 #endif
 
-	inline std::string GetErrorAsString(HRESULT hr) {
-		LPSTR messageBuffer = nullptr;
-		size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-			NULL, hr, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+    inline std::string GetErrorAsString(HRESULT hr) {
+        LPSTR messageBuffer = nullptr;
+        size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL, hr, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
 
-		std::string message(messageBuffer, size);
+        std::string message(messageBuffer, size);
 
-		//Free the buffer.
-		LocalFree(messageBuffer);
+        //Free the buffer.
+        LocalFree(messageBuffer);
 
-		return message;
-	}
-	
-	//Returns the last Win32 error, in string format. Returns an empty string if there is no error.
+        return message;
+    }
+
+    //Returns the last Win32 error, in string format. Returns an empty string if there is no error.
     inline std::string GetLastErrorAsString() {
         //Get the error message, if any.
         DWORD errorMessageID = ::GetLastError();
         if (errorMessageID == 0)
             return std::string(); //No error message has been recorded
 
-		return GetErrorAsString(errorMessageID);
+        return GetErrorAsString(errorMessageID);
     }
+}
+
+namespace {
+    // {F1EC293F-DBBD-4A4B-94F4-FA52BA0BA6EE}
+    static const GUID CLSID_TInternetProtocol = { 0xf1ec293f, 0xdbbd, 0x4a4b,{ 0x94, 0xf4, 0xfa, 0x52, 0xba, 0xb, 0xa6, 0xee } };
 }
 
 class s::application::Impl {
@@ -915,6 +921,11 @@ struct s::wui::window::Impl : public IUnknown {
 	ContentSourceData csd;
 
     long ref;
+
+    inline const auto& getEmbeddedSource(const std::string& url) {
+        return csd.getEmbeddedSource(url);
+    }
+
     // IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) {
         if (riid == IID_IUnknown) { *ppv = this; AddRef(); return S_OK; }
@@ -1022,7 +1033,85 @@ struct s::wui::window::Impl : public IUnknown {
         HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT *pctinfo) { *pctinfo = 0; return S_OK; }
         HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT /*iTInfo*/, LCID /*lcid*/, ITypeInfo** /*ppTInfo*/) { return E_FAIL; }
         HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID /*riid*/, LPOLESTR* /*rgszNames*/, UINT /*cNames*/, LCID /*lcid*/, DISPID* /*rgDispId*/) { return E_FAIL; }
+
+
+        void dispVar(const std::string& ind, VARIANT& var) {
+            switch (var.vt) {
+            case VT_EMPTY:
+            {
+                std::cout << ind << "  EMPTY" << std::endl;
+                break;
+            }
+            case VT_I4:
+            {
+                std::cout << ind << "  I4:" << var.lVal << std::endl;
+                break;
+            }
+            case VT_BOOL:
+            {
+                std::cout << ind << "  BOOL:" << var.boolVal << std::endl;
+                break;
+            }
+            case VT_BSTR:
+            {
+                std::cout << ind << "  BSTR:" << var.bstrVal;
+                std::cout.flush();
+                if (var.bstrVal) {
+                    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+                    auto curl = convertor.to_bytes(var.bstrVal);
+                    std::cout << curl;
+                }
+                std::cout << std::endl;
+                break;
+            }
+            case VT_DISPATCH:
+            {
+                std::cout << ind << "  VT_DISPATCH:" << var.pdispVal << std::endl;
+                break;
+            }
+            case VT_BYREF | VT_BSTR:
+            {
+                std::cout << ind << "  REF-BSTR:" << var.pbstrVal;
+                if (var.pbstrVal) {
+                    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+                    auto curl = convertor.to_bytes(*(var.pbstrVal));
+                    std::cout << curl;
+                }
+                std::cout << std::endl;
+                break;
+            }
+            case VT_BYREF | VT_BOOL:
+            {
+                std::cout << ind << "  REF-BOOL:" << var.pboolVal << std::endl;
+                break;
+            }
+            case VT_BYREF | VT_VARIANT:
+            {
+                std::cout << ind << "  REF-VAR:" << var.pvarVal << std::endl;
+                if (var.pvarVal) {
+                    dispVar(ind + "  ", *(var.pvarVal));
+                }
+                break;
+            }
+            default:
+            {
+                std::cout << ind << "  vt:" << var.vt << std::endl;
+                assert(false);
+            }
+            }
+        }
+
+        void dispVal(DISPPARAMS* Params) {
+            std::cout << "argc:" << Params->cArgs << std::endl;
+            for (int i = 0; i < Params->cArgs; ++i) {
+                std::cout << "-i:" << i << std::endl;
+                dispVar("  ", (Params->rgvarg[i]));
+            }
+        }
+
         HRESULT STDMETHODCALLTYPE Invoke(DISPID dispIdMember, REFIID /*riid*/, LCID /*lcid*/, WORD /*wFlags*/, DISPPARAMS* Params, VARIANT* pVarResult, EXCEPINFO* /*pExcepInfo*/, UINT* /*puArgErr*/) {
+            //std::cout << "Invoke:" << dispIdMember << ", argc:" << Params->cArgs << std::endl;
+            //dispVal(Params);
             switch (dispIdMember) { // DWebBrowserEvents2
             case DISPID_BEFORENAVIGATE2:
                 webf->BeforeNavigate2(Params->rgvarg[5].pvarVal->bstrVal, Params->rgvarg[0].pboolVal);
@@ -1038,6 +1127,7 @@ struct s::wui::window::Impl : public IUnknown {
                 pVarResult->vt = VT_I4;
                 pVarResult->lVal = DLCTL_DLIMAGES | DLCTL_VIDEOS | DLCTL_BGSOUNDS | DLCTL_SILENT;
             }
+
             default:
                 return DISP_E_MEMBERNOTFOUND;
             }
@@ -1080,6 +1170,184 @@ struct s::wui::window::Impl : public IUnknown {
         HRESULT STDMETHODCALLTYPE ShowHelp(HWND /*hwnd*/, LPOLESTR /*pszHelpFile*/, UINT /*uCommand*/, DWORD /*dwData*/, POINT /*ptMouse*/, IDispatch* /*pDispatchObjectHit*/) { return S_OK; }
     } showui;
 
+    struct TInternetProtocolInfo : public IInternetProtocolInfo
+    {
+        s::wui::window::Impl *webf;
+
+        // IUnknown
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
+        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
+        ULONG STDMETHODCALLTYPE Release() { TRACER("TInternetProtocolInfo::Release"); return webf->Release(); }
+
+        // IInternetProtocolInfo
+        STDMETHODIMP ParseUrl(LPCWSTR /*pwzUrl*/, PARSEACTION /*parseAction*/, DWORD /*dwParseFlags*/,
+            LPWSTR /*pwzResult*/, DWORD /*cchResult*/, DWORD* /*pcchResult*/, DWORD /*dwReserved*/)
+        {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP CombineUrl(LPCWSTR /*pwzBaseUrl*/, LPCWSTR /*pwzRelativeUrl*/,
+            DWORD /*dwCombineFlags*/, LPWSTR /*pwzResult*/, DWORD /*cchResult*/, DWORD* /*pcchResult*/,
+            DWORD /*dwReserved*/)
+        {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP CompareUrl(LPCWSTR /*pwzUrl1*/, LPCWSTR /*pwzUrl2*/, DWORD /*dwCompareFlags*/)
+        {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP QueryInfo(LPCWSTR /*pwzUrl*/, QUERYOPTION /*queryOption*/, DWORD /*dwQueryFlags*/,
+            LPVOID /*pBuffer*/, DWORD /*cbBuffer*/, DWORD* /*pcbBuf*/, DWORD /*dwReserved*/)
+        {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+    } ipinf;
+
+    struct TInternetProtocol :public IInternetProtocol
+    {
+        TInternetProtocol(s::wui::window::Impl& impl) : impl_(impl), refCount(1), data(nullptr), dataLen(0), dataCurrPos(0) { }
+        virtual ~TInternetProtocol() { }
+
+        // IUnknown
+        STDMETHODIMP QueryInterface(REFIID riid, void **ppvObject) {
+            static const QITAB qit[] = {
+                QITABENT(TInternetProtocol, IInternetProtocol),
+                QITABENT(TInternetProtocol, IInternetProtocolRoot),
+                { 0 }
+            };
+            return QISearch(this, qit, riid, ppvObject);
+        }
+
+        ULONG STDMETHODCALLTYPE AddRef() { return InterlockedIncrement(&refCount); }
+        ULONG STDMETHODCALLTYPE Release() {
+            TRACER("TInternetProtocol::Release");
+            LONG res = InterlockedDecrement(&refCount);
+            assert(res >= 0);
+            if (0 == res)
+                delete this;
+            return res;
+        }
+
+        // IInternetProtocol
+        STDMETHODIMP Start(
+            LPCWSTR szUrl,
+            IInternetProtocolSink *pIProtSink,
+            IInternetBindInfo *pIBindInfo,
+            DWORD grfSTI,
+            HANDLE_PTR dwReserved) {
+            TRACER("TInternetProtocol::Start");
+            std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+            std::string url(convertor.to_bytes(szUrl));
+            url = url.substr(empfx.length() + 1); // +1 for colon
+            if (url.substr(0, 2) == "//") {
+                url = url.substr(2);
+            }
+            if (url.at(url.length() - 1) == '/') {
+                url = url.substr(0, url.length() - 1);
+            }
+            auto& pdata = impl_.getEmbeddedSource(url);
+            data = std::get<0>(pdata);
+            dataLen = std::get<1>(pdata);
+            auto& mimetype = std::get<2>(pdata);
+            dataCurrPos = 0;
+            std::cout << "TInternetProtocol::Start::URL:" << url << ", " << mimetype << ", len:" << dataLen << std::endl;
+
+            pIProtSink->ReportProgress(BINDSTATUS_FINDINGRESOURCE, L"");
+            pIProtSink->ReportProgress(BINDSTATUS_CONNECTING, L"");
+            pIProtSink->ReportProgress(BINDSTATUS_SENDINGREQUEST, L"");
+            pIProtSink->ReportData(BSCF_FIRSTDATANOTIFICATION | BSCF_LASTDATANOTIFICATION | BSCF_DATAFULLYAVAILABLE, (ULONG)dataLen, (ULONG)dataLen);
+            pIProtSink->ReportResult(S_OK, 200, nullptr);
+            return S_OK;
+        }
+
+        STDMETHODIMP Continue(PROTOCOLDATA* /*pStateInfo*/) { return S_OK; }
+        STDMETHODIMP Abort(HRESULT /*hrReason*/, DWORD /*dwOptions*/) { return S_OK; }
+        STDMETHODIMP Terminate(DWORD /*dwOptions*/) { return S_OK; }
+        STDMETHODIMP Suspend() { return E_NOTIMPL; }
+        STDMETHODIMP Resume() { return E_NOTIMPL; }
+        STDMETHODIMP Read(void *pv, ULONG cb, ULONG *pcbRead) {
+            TRACER("TInternetProtocol::Read");
+            if (!data)
+                return S_FALSE;
+            size_t dataAvail = dataLen - dataCurrPos;
+            if (0 == dataAvail)
+                return S_FALSE;
+            ULONG toRead = cb;
+            if (toRead > dataAvail)
+                toRead = (ULONG)dataAvail;
+            const unsigned char *dataToRead = data + dataCurrPos;
+            memcpy(pv, dataToRead, toRead);
+            dataCurrPos += toRead;
+            *pcbRead = toRead;
+            return S_OK;
+        }
+        STDMETHODIMP Seek(LARGE_INTEGER dlibMove, DWORD dwOrigin, ULARGE_INTEGER *plibNewPosition) {
+            TRACER("TInternetProtocol::Seek");
+            // doesn't seem to be called
+            return E_NOTIMPL;
+        }
+        STDMETHODIMP LockRequest(DWORD /*dwOptions*/) { return S_OK; }
+        STDMETHODIMP UnlockRequest() { return S_OK; }
+    protected:
+        s::wui::window::Impl& impl_;
+        LONG refCount;
+
+        // those are filled in Start() and represent data to be sent
+        // for a given url
+        const unsigned char* data;
+        size_t dataLen;
+        size_t dataCurrPos;
+    };
+
+
+    struct TInternetProtocolFactory : public IClassFactory
+    {
+        s::wui::window::Impl *webf;
+
+        // IUnknown
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
+        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
+        ULONG STDMETHODCALLTYPE Release() { TRACER("TOleInPlaceFrame::Release"); return webf->Release(); }
+
+        // IClassFactory
+        STDMETHODIMP CreateInstance(IUnknown *pUnkOuter, REFIID riid, void **ppvObject) {
+            TRACER("TInternetProtocolFactory::CreateInstance");
+            if (pUnkOuter != nullptr)
+                return CLASS_E_NOAGGREGATION;
+            if (riid == IID_IInternetProtocol) {
+                CComPtr<IInternetProtocol> proto(new TInternetProtocol(*webf));
+                return proto->QueryInterface(riid, ppvObject);
+            }
+            if (riid == IID_IInternetProtocolInfo) {
+                return webf->ipinf.QueryInterface(riid, ppvObject);
+            }
+            return E_NOINTERFACE;
+        }
+        STDMETHODIMP LockServer(BOOL /*fLock*/) { return S_OK; }
+    } ipfac;
+
+
+    // Register our protocol so that urlmon will call us for every
+    // url that starts with HW_PROTO_PREFIX
+    void RegisterInternetProtocolFactory()
+    {
+        CComPtr<IInternetSession> internetSession;
+        HRESULT hr = ::CoInternetGetSession(0, &internetSession, 0);
+        assert(!FAILED(hr));
+        hr = internetSession->RegisterNameSpace(&ipfac, CLSID_TInternetProtocol, empfxw.c_str(), 0, nullptr, 0);
+        assert(!FAILED(hr));
+    }
+
+    void UnregisterInternetProtocolFactory()
+    {
+        CComPtr<IInternetSession> internetSession;
+        HRESULT hr = ::CoInternetGetSession(0, &internetSession, 0);
+        assert(!FAILED(hr));
+        internetSession->UnregisterNameSpace(&ipfac, empfxw.c_str());
+    }
 
     Impl(s::wui::window& w);
     ~Impl();
@@ -1101,10 +1369,6 @@ struct s::wui::window::Impl : public IUnknown {
 
 	inline void setContentSourceResource(const std::string& path) {
 		csd.setResourceSource(path);
-	}
-
-	inline const auto& getEmbeddedSource(const std::string& url) {
-		return csd.getEmbeddedSource(url);
 	}
 
     inline void eval(const std::string& str) {
@@ -1174,12 +1438,21 @@ std::vector<s::wui::window::Impl*> s::wui::window::Impl::wlist;
 
 s::wui::window::Impl::Impl(s::wui::window& w) : browser_(w) {
     TRACER("window::Impl::Impl");
-    ref = 0; clientsite.webf = this; site.webf = this; frame.webf = this; dispatch.webf = this; uihandler.webf = this; showui.webf = this;
+    ref = 0;
+    clientsite.webf = this;
+    site.webf = this;
+    frame.webf = this;
+    dispatch.webf = this;
+    uihandler.webf = this;
+    showui.webf = this;
+    ipfac.webf = this;
+    ipinf.webf = this;
     this->hhost = 0;
     ibrowser = 0;
     cookie = 0;
     isnaving = 0;
     wlist.push_back(this);
+    RegisterInternetProtocolFactory();
 }
 
 s::wui::window::Impl::~Impl() {
@@ -1192,6 +1465,7 @@ s::wui::window::Impl::~Impl() {
             break;
         }
     }
+    UnregisterInternetProtocolFactory();
 }
 
 void s::wui::window::Impl::Close() {
@@ -1419,16 +1693,24 @@ bool s::wui::window::Impl::open() {
     }
     ::ShowWindow(hWnd, SW_SHOW);
     ::UpdateWindow(hWnd);
-    addObject(("nproxy"));
     return (hWnd != 0);
 }
 
 void s::wui::window::Impl::go(const std::string& urlx) {
     auto url = urlx;
-    if (url.substr(0, 4) != "http") {
-		assert(false);
-        url = "res://" + s::app().name + ".exe/" + url;
+
+    if(csd.type == s::wui::ContentSourceType::Embedded){
+        if ((url.length() < empfx.length()) || (url.substr(0, empfx.length()) != empfx)) {
+            url = empfx + "://" + url;
+        }
+    }else if(csd.type == s::wui::ContentSourceType::Resource){
+        if (url.substr(0, 4) != "http") {
+            url = "res://" + s::app().name + "/" + url;
+        }
     }
+
+    std::cout << "URLx:" << urlx << std::endl;
+    std::cout << "URL:" << url << std::endl;
 
     // Navigate to the new one and delete the old one
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
@@ -1438,13 +1720,14 @@ void s::wui::window::Impl::go(const std::string& urlx) {
     VARIANT v;
     v.vt = VT_I4;
     v.lVal = 0; //v.lVal=navNoHistory;
-    ibrowser->Navigate((BSTR)ws.c_str(), &v, NULL, NULL, NULL);
+    HRESULT hr = ibrowser->Navigate((BSTR)ws.c_str(), &v, NULL, NULL, NULL);
 
     // nb. the events know not to bother us for currentlynav.
     // (Special case: maybe it's already loaded by the time we get here!)
     if ((isnaving & PreDocumentComplete) == 0) {
         WPARAM w = (GetWindowLong(hhost, GWL_ID) & 0xFFFF) | ((WEBFN_LOADED & 0xFFFF) << 16);
         PostMessage(GetParent(hhost), WM_COMMAND, w, (LPARAM)hhost);
+        addObject(("nproxy"));
         if (browser_.onLoad) {
             browser_.onLoad(url);
         }
@@ -1454,7 +1737,7 @@ void s::wui::window::Impl::go(const std::string& urlx) {
 }
 
 void s::wui::window::Impl::DocumentComplete(const wchar_t* /*wurl*/) {
-    TRACER("DocumentComplete");
+    TRACER1("DocumentComplete");
     isnaving &= ~PreDocumentComplete;
     if (isnaving & PreNavigateComplete) {
         return; // we're in the middle of Go(), so the notification will be handled there
@@ -1466,7 +1749,7 @@ void s::wui::window::Impl::DocumentComplete(const wchar_t* /*wurl*/) {
 }
 
 void s::wui::window::Impl::BeforeNavigate2(const wchar_t* wurl, short *cancel) {
-    TRACER("BeforeNavigate2");
+    TRACER1("BeforeNavigate2");
     *cancel = FALSE;
     int oldisnav = isnaving;
     isnaving &= ~PreBeforeNavigate;
@@ -1477,16 +1760,18 @@ void s::wui::window::Impl::BeforeNavigate2(const wchar_t* wurl, short *cancel) {
     *cancel = TRUE;
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
     curl = convertor.to_bytes(wurl);
+    std::cout << "CURL:" << curl << std::endl;
 
     WPARAM w = (GetWindowLong(hhost, GWL_ID) & 0xFFFF) | ((WEBFN_CLICKED & 0xFFFF) << 16);
     PostMessage(GetParent(hhost), WM_COMMAND, w, (LPARAM)hhost);
 }
 
 void s::wui::window::Impl::NavigateComplete2(const wchar_t* burl) {
-    TRACER("NavigateComplete2");
+    TRACER1("NavigateComplete2");
     std::wstring wurl = burl;
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
     std::string url(convertor.to_bytes(wurl));
+    addObject(("nproxy"));
     if (browser_.onLoad) {
         browser_.onLoad(url);
     }
