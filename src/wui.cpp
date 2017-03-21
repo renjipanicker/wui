@@ -1231,6 +1231,13 @@ struct s::wui::window::Impl : public IUnknown {
             return res;
         }
 
+        inline auto stripPrefixIf(std::string url, const std::string& pfx) {
+            if (url.substr(0, pfx.length()) == pfx) {
+                url = url.substr(pfx.length());
+            }
+            return url;
+        }
+
         // IInternetProtocol
         STDMETHODIMP Start(
             LPCWSTR szUrl,
@@ -1241,10 +1248,12 @@ struct s::wui::window::Impl : public IUnknown {
             TRACER("TInternetProtocol::Start");
             std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
             std::string url(convertor.to_bytes(szUrl));
-            url = url.substr(empfx.length() + 1); // +1 for colon
-            if (url.substr(0, 2) == "//") {
-                url = url.substr(2);
-            }
+            std::cout << "XURL:" << url << std::endl;
+            url = stripPrefixIf(url, empfx);
+            url = stripPrefixIf(url, ":");
+            url = stripPrefixIf(url, "//");
+            url = stripPrefixIf(url, s::app().name);
+            url = stripPrefixIf(url, "/");
             if (url.at(url.length() - 1) == '/') {
                 url = url.substr(0, url.length() - 1);
             }
@@ -1254,6 +1263,9 @@ struct s::wui::window::Impl : public IUnknown {
             auto& mimetype = std::get<2>(pdata);
             dataCurrPos = 0;
             std::cout << "TInternetProtocol::Start::URL:" << url << ", " << mimetype << ", len:" << dataLen << std::endl;
+            if (url == "index.js") {
+                std::cout << data << std::endl;
+            }
 
             pIProtSink->ReportProgress(BINDSTATUS_FINDINGRESOURCE, L"");
             pIProtSink->ReportProgress(BINDSTATUS_CONNECTING, L"");
@@ -1701,7 +1713,7 @@ void s::wui::window::Impl::go(const std::string& urlx) {
 
     if(csd.type == s::wui::ContentSourceType::Embedded){
         if ((url.length() < empfx.length()) || (url.substr(0, empfx.length()) != empfx)) {
-            url = empfx + "://" + url;
+            url = empfx + "://" + s::app().name + "/" + url;
         }
     }else if(csd.type == s::wui::ContentSourceType::Resource){
         if (url.substr(0, 4) != "http") {
