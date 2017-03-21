@@ -38,7 +38,7 @@
 #include <android/asset_manager_jni.h>
 #endif
 
-// NDK-specific includes
+// WIN-specific includes
 #ifdef WUI_WIN
 #include <windows.h>
 #include <shlobj.h>
@@ -53,13 +53,35 @@
 #include <codecvt>
 #endif
 
+// OSX-specific includes
+#ifdef WUI_OSX
+#import <Cocoa/Cocoa.h>
+#import <WebKit/WebKit.h>
+#import <objc/runtime.h>
+#endif
+
 namespace {
+#ifdef WUI_OSX
+    //////////////////////////
+    inline std::string getCString(NSString* str) {
+        std::string cstr([str UTF8String]);
+        return cstr;
+    }
+
+    inline NSString* getNSString(const std::string& str) {
+        NSString *ustr = [NSString stringWithCString : str.c_str()
+                                            encoding : [NSString defaultCStringEncoding]];
+        return ustr;
+    }
+#endif
+
     template<typename T>
     inline void unused(const T&){}
 
     const std::string jspfx = "javascript:";
     const std::string empfx = "embedded";
     const std::wstring empfxw = L"embedded";
+
     struct ContentSourceData {
         s::wui::ContentSourceType type;
         std::string path;
@@ -78,9 +100,55 @@ namespace {
             path = p;
         }
 
-        inline const auto& getEmbeddedSource(const std::string& url) {
+        inline auto normaliseUrl(std::string url) {
+            if(type == s::wui::ContentSourceType::Embedded){
+                if ((url.length() < empfx.length()) || (url.substr(0, empfx.length()) != empfx)) {
+                    url = empfx + "://app.res/" + url;
+                }
+            }else if(type == s::wui::ContentSourceType::Resource){
+                if (url.substr(0, 4) != "http") {
+#ifdef WUI_WIN
+                    url = "res://" + s::app().name + "/" + url;
+#endif
+#ifdef WUI_OSX
+                    auto upath = getCString([[NSBundle mainBundle] resourcePath]);
+                    upath += path;
+                    upath += url;
+                    url = upath;
+#endif
+#ifdef WUI_NDK
+                    auto rpath = path;
+                    if(rpath.at(0) == '/') {
+                        rpath = rpath.substr(1);
+                    }
+                    if(rpath.at(rpath.length()-1) == '/') {
+                        rpath = rpath.substr(0, rpath.length()-1);
+                    }
+                    url = "file:///android_asset/" + rpath + "/" + url;
+#endif
+                }
+            }
+            return url;
+        }
+
+        inline auto stripPrefixIf(std::string url, const std::string& pfx) {
+            if ((url.length() >= pfx.length()) && (url.substr(0, pfx.length()) == pfx)) {
+                url = url.substr(pfx.length());
+            }
+            return url;
+        }
+
+        inline const auto& getEmbeddedSource(std::string url) {
             assert(type == s::wui::ContentSourceType::Embedded);
             assert(lst != nullptr);
+            url = stripPrefixIf(url, empfx);
+            url = stripPrefixIf(url, ":");
+            url = stripPrefixIf(url, "//");
+            url = stripPrefixIf(url, "app.res");
+            url = stripPrefixIf(url, "/");
+            if (url.at(url.length() - 1) == '/') {
+                url = url.substr(0, url.length() - 1);
+            }
             auto fit = lst->find(url);
             if(fit == lst->end()){
                 throw std::runtime_error(std::string("unknown url:") + url);
@@ -120,22 +188,6 @@ inline s::wui::window::Impl& s::wui::window::impl() {
 }
 
 #ifdef WUI_OSX
-#import <Cocoa/Cocoa.h>
-#import <WebKit/WebKit.h>
-#import <objc/runtime.h>
-
-//////////////////////////
-inline std::string getCString(NSString* str) {
-    std::string cstr([str UTF8String]);
-    return cstr;
-}
-
-inline NSString* getNSString(const std::string& str) {
-    NSString *ustr = [NSString stringWithCString : str.c_str()
-                                        encoding : [NSString defaultCStringEncoding]];
-    return ustr;
-}
-
 ////////////////////////////////////
 @interface WuiObjDelegate : NSObject{
 @public
@@ -465,15 +517,9 @@ public:
         [webView.mainFrame loadRequest : request];
     }
 
-    inline void go(const std::string& surl) {
+    inline void go(const std::string& urlx) {
+        auto surl = csd.normaliseUrl(urlx);
         NSString *pstr = getNSString(surl);
-        if(csd.type == s::wui::ContentSourceType::Embedded){
-            pstr = getNSString(empfx + ":" + surl);
-        }else if(csd.type == s::wui::ContentSourceType::Resource){
-            NSString *resourcesPath = [[NSBundle mainBundle] resourcePath];
-            resourcesPath = [resourcesPath stringByAppendingString : getNSString(csd.path)];
-            pstr = [resourcesPath stringByAppendingString : pstr];
-        }
         loadPage(pstr);
     }
 
@@ -507,8 +553,8 @@ public:
 @implementation EmbeddedURLProtocol
 
 +(BOOL)canInitWithRequest:(NSURLRequest *)request {
-    //NSLog(@"canInit:%@", [request URL]);
-    return [[[request URL] scheme] isEqualToString:@"embedded"];
+    NSURL *url = [request URL];
+    return [[url scheme] isEqualToString:@"embedded"];
 }
 
 +(NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
@@ -522,7 +568,6 @@ public:
 -(void)startLoading {
     NSURL *url = [[self request] URL];
     NSString *pathString = [url resourceSpecifier];
-    //NSLog(@"startLoading:%@", pathString);
 
     NSApplication *app = [NSApplication sharedApplication];
     auto wd = (AppDelegate*)[app delegate];
@@ -661,7 +706,7 @@ public:
     inline Impl(s::application& a) : app(a) {
         ::_tzset();
         if (::OleInitialize(NULL) != S_OK) {
-			throw std::runtime_error(std::string("OleInitialize() failed:") + GetLastErrorAsString());
+            throw std::runtime_error(std::string("OleInitialize() failed:") + GetLastErrorAsString());
         }
 
         char apath[MAX_PATH];
@@ -669,13 +714,13 @@ public:
         if (rv == 0) {
             DWORD ec = GetLastError();
             assert(ec != ERROR_SUCCESS);
-			throw std::runtime_error(std::string("Internal error retrieving process path:") + GetLastErrorAsString());
+            throw std::runtime_error(std::string("Internal error retrieving process path:") + GetLastErrorAsString());
         }
 
         app.path = apath;
-		char *ptr = strrchr(apath, '\\');
-		if (ptr != NULL)
-			strcpy_s(apath, MAX_PATH, ptr + 1);
+        char *ptr = strrchr(apath, '\\');
+        if (ptr != NULL)
+            strcpy_s(apath, MAX_PATH, ptr + 1);
 
         app.name = apath;
     }
@@ -695,9 +740,9 @@ public:
         /// \todo Use SHGetKnownFolderPath for vista and later.
         HRESULT hr = ::SHGetFolderPathA(NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, chPath);
         if(!SUCCEEDED(hr)) {
-			throw std::runtime_error(std::string("Internal error retrieving data directory:") + GetErrorAsString(hr));
+            throw std::runtime_error(std::string("Internal error retrieving data directory:") + GetErrorAsString(hr));
         }
-		std::string data(chPath);
+        std::string data(chPath);
         std::replace(data.begin(), data.end(), '\\', '/');
         return data;
     }
@@ -918,7 +963,7 @@ const LPCWSTR WEBFORM_CLASS = L"WebUIWindowClass";
 
 struct s::wui::window::Impl : public IUnknown {
     static std::vector<s::wui::window::Impl*> wlist;
-	ContentSourceData csd;
+    ContentSourceData csd;
 
     long ref;
 
@@ -1231,13 +1276,6 @@ struct s::wui::window::Impl : public IUnknown {
             return res;
         }
 
-        inline auto stripPrefixIf(std::string url, const std::string& pfx) {
-            if (url.substr(0, pfx.length()) == pfx) {
-                url = url.substr(pfx.length());
-            }
-            return url;
-        }
-
         // IInternetProtocol
         STDMETHODIMP Start(
             LPCWSTR szUrl,
@@ -1249,14 +1287,6 @@ struct s::wui::window::Impl : public IUnknown {
             std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
             std::string url(convertor.to_bytes(szUrl));
             std::cout << "XURL:" << url << std::endl;
-            url = stripPrefixIf(url, empfx);
-            url = stripPrefixIf(url, ":");
-            url = stripPrefixIf(url, "//");
-            url = stripPrefixIf(url, s::app().name);
-            url = stripPrefixIf(url, "/");
-            if (url.at(url.length() - 1) == '/') {
-                url = url.substr(0, url.length() - 1);
-            }
             auto& pdata = impl_.getEmbeddedSource(url);
             data = std::get<0>(pdata);
             dataLen = std::get<1>(pdata);
@@ -1372,27 +1402,27 @@ struct s::wui::window::Impl : public IUnknown {
     }
 
     inline void setMenu(const menu& /*m*/) {
-		throw std::runtime_error(std::string("Not implemented: setMenu"));
+        throw std::runtime_error(std::string("Not implemented: setMenu"));
     }
 
-	inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
-		csd.setEmbeddedSource(lst);
-	}
+    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
+        csd.setEmbeddedSource(lst);
+    }
 
-	inline void setContentSourceResource(const std::string& path) {
-		csd.setResourceSource(path);
-	}
+    inline void setContentSourceResource(const std::string& path) {
+        csd.setResourceSource(path);
+    }
 
     inline void eval(const std::string& str) {
         CComPtr<IHTMLDocument2> doc = GetDoc();
         if (doc == NULL) {
-			throw std::runtime_error(std::string("Unable to get document object:") + GetLastErrorAsString());
+            throw std::runtime_error(std::string("Unable to get document object:") + GetLastErrorAsString());
         }
 
         CComPtr<IHTMLWindow2> win;
         doc->get_parentWindow(&win);
         if (win == NULL) {
-			throw std::runtime_error(std::string("Unable to get parent window:") + GetLastErrorAsString());
+            throw std::runtime_error(std::string("Unable to get parent window:") + GetLastErrorAsString());
         }
 
         std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
@@ -1401,17 +1431,17 @@ struct s::wui::window::Impl : public IUnknown {
         VariantInit(&v);
         HRESULT hr = win->execScript((BSTR)rv.c_str(), NULL, &v);
         if (hr != S_OK) {
-			throw std::runtime_error(std::string("JavaScript execution error:") + GetErrorAsString(hr));
+            throw std::runtime_error(std::string("JavaScript execution error:") + GetErrorAsString(hr));
         }
 
         VariantClear(&v);
         ::InvalidateRect(hhost, 0, true);
     }
 
-	inline void addNativeObject(s::js::objectbase& jo, const std::string& body) {
-	}
-	
-	std::unique_ptr<WinObject> nproxy_;
+    inline void addNativeObject(s::js::objectbase& jo, const std::string& body) {
+    }
+
+    std::unique_ptr<WinObject> nproxy_;
     inline void addObject(const std::string& name) {
         TRACER("addObject");
         nproxy_ = std::make_unique<WinObject>(browser_);
@@ -1524,27 +1554,27 @@ bool s::wui::window::Impl::setupOle() {
     CComPtr<IOleObject> iole;
     hr = CoCreateInstance(CLSID_WebBrowser, NULL, CLSCTX_INPROC_SERVER, IID_IOleObject, (void**)&iole);
     if (hr != S_OK) {
-		throw std::runtime_error(std::string("CoCreateInstance error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("CoCreateInstance error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     hr = iole->SetClientSite(&clientsite);
     if (hr != S_OK) {
-		throw std::runtime_error(std::string("SetClientSite error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("SetClientSite error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     hr = iole->SetHostNames(L"MyHost", L"MyDoc");
     if (hr != S_OK) {
-		throw std::runtime_error(std::string("SetHostNames error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("SetHostNames error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     hr = OleSetContainedObject(iole, TRUE);
     if (hr != S_OK) {
-		throw std::runtime_error(std::string("OleSetContainedObject error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("OleSetContainedObject error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     hr = iole->DoVerb(OLEIVERB_SHOW, 0, &clientsite, 0, hhost, &rc);
     if (hr != S_OK) {
-		throw std::runtime_error(std::string("DoVerb error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("DoVerb error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     bool connected = false;
@@ -1560,7 +1590,7 @@ bool s::wui::window::Impl::setupOle() {
     }
 
     if (!connected) {
-		throw std::runtime_error(std::string("Not connected error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("Not connected error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     iole->QueryInterface(IID_IWebBrowser2, (void**)&ibrowser);
@@ -1573,19 +1603,19 @@ void s::wui::window::Impl::addCustomObject(IDispatch* custObj, const std::string
     HRESULT hr;
     CComPtr<IHTMLDocument2> doc = GetDoc();
     if (doc == NULL) {
-		throw std::runtime_error(std::string("Invalid document state:") + GetLastErrorAsString());
+        throw std::runtime_error(std::string("Invalid document state:") + GetLastErrorAsString());
     }
 
     CComPtr<IHTMLWindow2> win;
     hr = doc->get_parentWindow(&win);
     if (win == NULL) {
-		throw std::runtime_error(std::string("unable to get parent window:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("unable to get parent window:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     CComPtr<IDispatchEx> winEx;
     hr = win->QueryInterface(&winEx);
     if (winEx == NULL) {
-		throw std::runtime_error(std::string("unable to get DispatchEx:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("unable to get DispatchEx:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     _bstr_t objName(name.c_str());
@@ -1593,7 +1623,7 @@ void s::wui::window::Impl::addCustomObject(IDispatch* custObj, const std::string
     DISPID dispid;
     hr = winEx->GetDispID(objName, fdexNameEnsure, &dispid);
     if (FAILED(hr)) {
-		throw std::runtime_error(std::string("unable to get DispatchID:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("unable to get DispatchID:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     DISPID namedArgs[] = { DISPID_PROPERTYPUT };
@@ -1607,7 +1637,7 @@ void s::wui::window::Impl::addCustomObject(IDispatch* custObj, const std::string
 
     hr = winEx->InvokeEx(dispid, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &params, NULL, NULL, NULL);
     if (FAILED(hr)) {
-		throw std::runtime_error(std::string("unable to invoke JSE:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("unable to invoke JSE:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 }
 
@@ -1701,7 +1731,7 @@ bool s::wui::window::Impl::open() {
 
     HWND hWnd = CreateWindowW(WEBFORM_CLASS, title.c_str(), flags, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, (HMENU)id, hInstance, (LPVOID)this);
     if (hWnd == NULL) {
-		throw std::runtime_error(std::string("Could not create window:") + GetLastErrorAsString());
+        throw std::runtime_error(std::string("Could not create window:") + GetLastErrorAsString());
     }
     ::ShowWindow(hWnd, SW_SHOW);
     ::UpdateWindow(hWnd);
@@ -1709,20 +1739,7 @@ bool s::wui::window::Impl::open() {
 }
 
 void s::wui::window::Impl::go(const std::string& urlx) {
-    auto url = urlx;
-
-    if(csd.type == s::wui::ContentSourceType::Embedded){
-        if ((url.length() < empfx.length()) || (url.substr(0, empfx.length()) != empfx)) {
-            url = empfx + "://" + s::app().name + "/" + url;
-        }
-    }else if(csd.type == s::wui::ContentSourceType::Resource){
-        if (url.substr(0, 4) != "http") {
-            url = "res://" + s::app().name + "/" + url;
-        }
-    }
-
-    std::cout << "URLx:" << urlx << std::endl;
-    std::cout << "URL:" << url << std::endl;
+    auto url = csd.normaliseUrl(urlx);
 
     // Navigate to the new one and delete the old one
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
@@ -1793,7 +1810,7 @@ IHTMLDocument2 *s::wui::window::Impl::GetDoc() {
     CComPtr<IDispatch> xdispatch;
     HRESULT hr = ibrowser->get_Document(&xdispatch);
     if (xdispatch == 0) {
-		throw std::runtime_error(std::string("unable to get document:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        throw std::runtime_error(std::string("unable to get document:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
     }
 
     CComPtr<IHTMLDocument2> doc;
@@ -1912,6 +1929,8 @@ public:
     }
 
     inline void onLoad(const std::string& url) {
+        ALOG("onLoad:%s", url.c_str());
+
         if(url.compare(0, jspfx.length(), jspfx) == 0){
             return;
         }
@@ -1936,6 +1955,7 @@ public:
     }
 
     inline const auto& getEmbeddedSource(const std::string& url) {
+        //ALOG("getEmbeddedSource:%s", url.c_str());
         return csd.getEmbeddedSource(url);
     }
 
@@ -1975,13 +1995,15 @@ public:
         envg.env->CallVoidMethod(_s_activity, _s_goStandardFn, jdata);
     }
 
-    inline void go(const std::string& url) {
+    inline void go(const std::string& urlx) {
+        auto url = csd.normaliseUrl(urlx);
         try{
             onLoad(url);
         }catch(const std::exception& ex){
             ALOG("onLoad-error:%s", ex.what());
         }
         JniEnvGuard envg;
+        //ALOG("Loading:%s", url.c_str());
         if(csd.type == s::wui::ContentSourceType::Embedded){
             auto& data = getEmbeddedSource(url);
             jstring jurl = envg.env->NewStringUTF(url.c_str());
@@ -1989,17 +2011,10 @@ public:
             jstring jmimetype = envg.env->NewStringUTF(std::get<2>(data).c_str());
             envg.env->CallVoidMethod(_s_activity, _s_goEmbeddedFn, jurl, jstr, jmimetype);
         }else if(csd.type == s::wui::ContentSourceType::Resource){
-            auto rpath = csd.path;
-            if(rpath.at(0) == '/') {
-                rpath = rpath.substr(1);
-            }
-            if(rpath.at(rpath.length()-1) == '/') {
-                rpath = rpath.substr(0, rpath.length()-1);
-            }
-            auto furl = "file:///android_asset/" + rpath + "/" + url;
-            jstring jurl = envg.env->NewStringUTF(furl.c_str());
+            jstring jurl = envg.env->NewStringUTF(url.c_str());
             envg.env->CallVoidMethod(_s_activity, _s_goStandardFn, jurl);
         }
+        //ALOG("Loaded:%s", url.c_str());
     }
 };
 
@@ -2079,7 +2094,7 @@ namespace {
         try{
             main(args.size(), &args.front());
         }catch(const std::exception& ex){
-            ALOG("error in worker thread:%s", ex.what());
+            ALOG("error in main worker thread:%s", ex.what());
         }
     }
 }
@@ -2183,6 +2198,7 @@ extern "C" {
         auto& data = _s_wimpl->getEmbeddedSource(url);
         jstring jmimetype = env->NewStringUTF(std::get<2>(data).c_str());
         auto len = std::get<1>(data);
+        ALOG("GetPageData:Loading:%s(%u)", url.c_str(), len);
         jbyteArray jstr = env->NewByteArray(len);
         env->SetByteArrayRegion(jstr, 0, len, (const jbyte*)std::get<0>(data));
 

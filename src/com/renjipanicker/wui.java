@@ -104,8 +104,7 @@ public class wui {
                 final Uri uri = Uri.parse(url);
                 final String scheme = uri.getScheme();
                 if (scheme.equals("embedded")) {
-                    String path = uri.getHost();
-                    Object data[] = getPageData(path);
+                    Object data[] = getPageData(url);
                     if(data != null){
                         String mim = (String)data[0];
                         byte[] dat = (byte[])data[1];
@@ -114,6 +113,7 @@ public class wui {
                         if(mim.equals("image/png")){
                             enc = "binary";
                         }
+                        Log.d(TAG, "webres:" + url + ":" + enc);
                         return new WebResourceResponse(mim, enc, is);
                     }
 
@@ -169,8 +169,8 @@ public class wui {
         mainHandler.post(new Runnable() {
             public void run() {
                 insertObjects();
-//                Log.d(TAG, data);
-                webView.loadDataWithBaseURL("embedded://", data, mimetype, "utf-8", null);
+                Log.d(TAG, "loadDataWithBaseURL:" + url);
+                webView.loadDataWithBaseURL(url, data, mimetype, "utf-8", null);
                 insertObjectBody();
                 initPage(url);
             }

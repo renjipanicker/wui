@@ -26,9 +26,9 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
     for(auto& ch : ifname){
         switch(ch){
             case '/':
-			case ':':
-			case '\\':
-				ext = "";
+            case ':':
+            case '\\':
+                ext = "";
                 fname = "";
                 vname += "_";
                 break;
@@ -37,7 +37,7 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
                 fname += ch;
                 vname += "_";
                 break;
-			case '-':
+            case '-':
                 ext += ch;
                 fname += ch;
                 vname += "_";
@@ -60,78 +60,78 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
     size_t tlen = 0;
     unsigned char buf[17];
     std::ifstream ifs(ifname, std::ios::binary);
-	std::string s;
-	while(!ifs.eof()) {
+    std::string s;
+    while(!ifs.eof()) {
         ifs.read((char*)buf, 16);
         auto len = ifs.gcount();
         buf[len] = 0;
-		bool inWS = false;
+        bool inWS = false;
         for(int i = 0; i < len; ++i){
-			unsigned int ch = buf[i];
-			switch (ch) {
-			case '\r':
-				continue;
-			case '\n':
-			case '\t':
-			case ' ':
-				if (inWS) {
-					continue;
-				}
-				inWS = true;
-				ch = ' ';
-				break;
-			default:
-				inWS = false;
-				break;
-			}
-			s += ch;
+            unsigned int ch = buf[i];
+            switch (ch) {
+            case '\r':
+                continue;
+            case '\n':
+            case '\t':
+            case ' ':
+                if (inWS) {
+                    continue;
+                }
+                inWS = true;
+                ch = ' ';
+                break;
+            default:
+                inWS = false;
+                break;
+            }
+            s += ch;
         }
-		while((s.length() >= 16) || (len < 16)){
-			size_t x = 0;
-			for (auto& ch : s) {
-				char hex[10];
-				sprintf_s(hex, 10, "%02x", (unsigned char)ch);
-				ofsrc << "0x" << hex << ", ";
-				if (++x == 16) {
-					break;
-				}
-			}
-			x = 0;
-			bool inStar = false;
-			ofsrc << "/* ";
-			for (auto& ch : s) {
-				if (isprint(ch)) {
-					if (inStar) {
-						if (ch == '/') {
-							ofsrc << ' ';
-						}
-						else {
-							ofsrc << ch;
-						}
-						inStar = false;
-					}
-					else if (ch == '*') {
-						inStar = true;
-					}
-					else {
-						ofsrc << ch;
-					}
-				}
-				else {
-					ofsrc << ' ';
-				}
-				if (++x == 16) {
-					break;
-				}
-			}
-			ofsrc << " */";
-			ofsrc << std::endl;
-			s = s.substr(x);
-			if (s.length() == 0) {
-				break;
-			}
-		}
-		tlen += len;
+        while((s.length() >= 16) || (len < 16)){
+            size_t x = 0;
+            for (auto& ch : s) {
+                char hex[10];
+                snprintf(hex, 10, "%02x", (unsigned char)ch);
+                ofsrc << "0x" << hex << ", ";
+                if (++x == 16) {
+                    break;
+                }
+            }
+            x = 0;
+            bool inStar = false;
+            ofsrc << "/* ";
+            for (auto& ch : s) {
+                if (isprint(ch)) {
+                    if (inStar) {
+                        if (ch == '/') {
+                            ofsrc << ' ';
+                        }
+                        else {
+                            ofsrc << ch;
+                        }
+                        inStar = false;
+                    }
+                    else if (ch == '*') {
+                        inStar = true;
+                    }
+                    else {
+                        ofsrc << ch;
+                    }
+                }
+                else {
+                    ofsrc << ' ';
+                }
+                if (++x == 16) {
+                    break;
+                }
+            }
+            ofsrc << " */";
+            ofsrc << std::endl;
+            s = s.substr(x);
+            if (s.length() == 0) {
+                break;
+            }
+        }
+        tlen += len;
         if(len < 16) {
             break;
         }
@@ -208,16 +208,16 @@ int main(int argc, const char* argv[]){
     ofhdr << "extern std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> " << ofname << ";" << std::endl;
     ofsrc << "#include \"" << ofname << ".hpp\"" << std::endl;
     ofsrc << "namespace {" << std::endl;
-	for(auto& ifname : ifnameList){
-		fmap << sep;
+    for(auto& ifname : ifnameList){
+        fmap << sep;
         processFile(ofhdr, ofsrc, vmap, fmap, ifname, vpfx);
         sep = ", ";
     }
     ofsrc << "} // namespace" << std::endl;
     ofsrc << std::endl;
-	ofsrc << vmap.str();
-	ofsrc << "std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> " << ofname << " = {" << std::endl;
+    ofsrc << vmap.str();
+    ofsrc << "std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> " << ofname << " = {" << std::endl;
     ofsrc << fmap.str();
     ofsrc << "};" << std::endl;
-	return 0;
+    return 0;
 }
