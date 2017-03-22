@@ -751,13 +751,97 @@ public:
 #define NOTIMPLEMENTED _ASSERT(0); return E_NOTIMPL
 
 namespace {
+    inline std::string VariantToString(VARIANTARG& var){
+        assert(var.vt == VT_BSTR);
+        _bstr_t bstrArg = var.bstrVal;
+        std::wstring arg = (const wchar_t*)bstrArg;
+        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+        auto rv = std::string(convertor.to_bytes(arg));
+        return rv;
+    }
+
+    inline std::string getStringFromCOM(DISPPARAMS* dp, const size_t& idx){
+        return VariantToString(dp->rgvarg[idx]);
+    }
+
+    inline CComPtr<IDispatch> VariantToDispatch(VARIANT var){
+        CComPtr<IDispatch> disp = (var.vt == VT_DISPATCH && var.pdispVal) ? var.pdispVal : NULL;
+        return disp;
+    }
+
+    inline HRESULT VariantToInteger(VARIANT var, long &integer){
+        CComVariant _var;
+        HRESULT hr = VariantChangeType(&_var, &var, 0, VT_I4);
+        if(FAILED(hr)){
+            return hr;
+        }
+        integer = _var.lVal;
+        return S_OK;
+    }
+
+    inline HRESULT DispatchGetProp(CComPtr<IDispatch> disp, LPOLESTR name, VARIANT *pVar){
+        HRESULT hr = S_OK;
+
+        if(!pVar){
+            return E_INVALIDARG;
+        }
+
+        DISPID dispid = 0;
+        hr = disp->GetIDsOfNames(IID_NULL, &name, 1, LOCALE_USER_DEFAULT, &dispid);
+        if(FAILED(hr)){
+            return hr;
+        }
+
+        DISPPARAMS dispParams = {0};
+        hr = disp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &dispParams, pVar, NULL, NULL);
+        if(FAILED(hr)){
+            return hr;
+        }
+        return hr;
+    }
+
+    inline std::vector<std::string> getStringArrayFromCOM(DISPPARAMS* dp, const size_t& idx){
+        assert(dp->rgvarg[idx].vt == VT_DISPATCH);
+
+        std::vector<std::string> rv;
+        CComPtr<IDispatch> pDispatch = VariantToDispatch(dp->rgvarg[idx]);
+        if(!pDispatch)
+            return rv;
+
+        CComVariant varLength;
+        HRESULT hr = DispatchGetProp(pDispatch, L"length", &varLength);
+        if(FAILED(hr)){
+            return rv;
+        }
+
+        long intLength;
+        hr = VariantToInteger(varLength, intLength);
+        if(FAILED(hr)){
+            return rv;
+        }
+
+        WCHAR wcharIndex[25];
+        CComVariant varItem;
+        for(long index = 0; index < intLength; ++index){
+            wsprintf(wcharIndex, _T("%ld\0"), index);
+            hr = DispatchGetProp(pDispatch, CComBSTR(wcharIndex), &varItem);
+            if(FAILED(hr)){
+                return rv;
+            }
+            auto item = VariantToString(varItem);
+            rv.push_back(item);
+        }
+
+        return rv;
+    }
+
     struct WinObject : public IDispatch {
     private:
-        s::wui::window& wb_;
+        s::js::objectbase& jo_;
         long ref;
     public:
 
-        WinObject(s::wui::window& w);
+        WinObject(s::js::objectbase& jo);
         ~WinObject();
 
         // IUnknown
@@ -777,7 +861,7 @@ namespace {
     };
 }
 
-WinObject::WinObject(s::wui::window& w) : wb_(w), ref(0) {
+WinObject::WinObject(s::js::objectbase& jo) : jo_(jo), ref(0) {
     TRACER("WinObject::WinObject");
 }
 
@@ -848,90 +932,6 @@ HRESULT STDMETHODCALLTYPE WinObject::GetIDsOfNames(REFIID /*riid*/,
     return hr;
 }
 
-inline std::string VariantToString(VARIANTARG& var) {
-    assert(var.vt == VT_BSTR);
-    _bstr_t bstrArg = var.bstrVal;
-    std::wstring arg = (const wchar_t*)bstrArg;
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-    auto rv = std::string(convertor.to_bytes(arg));
-    return rv;
-}
-
-inline std::string getStringFromCOM(DISPPARAMS* dp, const size_t& idx) {
-    return VariantToString(dp->rgvarg[idx]);
-}
-
-inline CComPtr<IDispatch> VariantToDispatch(VARIANT var) {
-    CComPtr<IDispatch> disp = (var.vt == VT_DISPATCH && var.pdispVal) ? var.pdispVal : NULL;
-    return disp;
-}
-
-inline HRESULT VariantToInteger(VARIANT var, long &integer) {
-    CComVariant _var;
-    HRESULT hr = VariantChangeType(&_var, &var, 0, VT_I4);
-    if (FAILED(hr)) {
-        return hr;
-    }
-    integer = _var.lVal;
-    return S_OK;
-}
-
-inline HRESULT DispatchGetProp(CComPtr<IDispatch> disp, LPOLESTR name, VARIANT *pVar) {
-    HRESULT hr = S_OK;
-
-    if (!pVar) {
-        return E_INVALIDARG;
-    }
-
-    DISPID dispid = 0;
-    hr = disp->GetIDsOfNames(IID_NULL, &name, 1, LOCALE_USER_DEFAULT, &dispid);
-    if (FAILED(hr)) {
-        return hr;
-    }
-
-    DISPPARAMS dispParams = { 0 };
-    hr = disp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &dispParams, pVar, NULL, NULL);
-    if (FAILED(hr)) {
-        return hr;
-    }
-    return hr;
-}
-
-inline std::vector<std::string> getStringArrayFromCOM(DISPPARAMS* dp, const size_t& idx) {
-    assert(dp->rgvarg[idx].vt == VT_DISPATCH);
-
-    std::vector<std::string> rv;
-    CComPtr<IDispatch> pDispatch = VariantToDispatch(dp->rgvarg[idx]);
-    if (!pDispatch)
-        return rv;
-
-    CComVariant varLength;
-    HRESULT hr = DispatchGetProp(pDispatch, L"length", &varLength);
-    if (FAILED(hr)) {
-        return rv;
-    }
-
-    long intLength;
-    hr = VariantToInteger(varLength, intLength);
-    if (FAILED(hr)) {
-        return rv;
-    }
-
-    WCHAR wcharIndex[25];
-    CComVariant varItem;
-    for (long index = 0; index < intLength; ++index) {
-        wsprintf(wcharIndex, _T("%ld\0"), index);
-        hr = DispatchGetProp(pDispatch, CComBSTR(wcharIndex), &varItem);
-        if (FAILED(hr)) {
-            return rv;
-        }
-        auto item = VariantToString(varItem);
-        rv.push_back(item);
-    }
-
-    return rv;
-}
-
 HRESULT STDMETHODCALLTYPE WinObject::Invoke(
     DISPID dispIdMember,
     REFIID /*riid*/,
@@ -947,8 +947,7 @@ HRESULT STDMETHODCALLTYPE WinObject::Invoke(
         if (dispIdMember == DISPID_VALUE + 1) {
             auto params = getStringArrayFromCOM(pDispParams, 0);
             auto fn = getStringFromCOM(pDispParams, 1);
-            auto obj = getStringFromCOM(pDispParams, 2);
-            //wb_.invoke(obj, fn, params);
+            jo_.invoke(fn, params);
             return S_OK;
         }
         assert(false);
@@ -979,6 +978,7 @@ struct s::wui::window::Impl : public IUnknown {
         if (riid == IID_IOleInPlaceUIWindow || riid == IID_IOleInPlaceFrame) { *ppv = &frame; AddRef(); return S_OK; }
         if (riid == IID_IDispatch) { *ppv = &dispatch; AddRef(); return S_OK; }
         if (riid == IID_IDocHostUIHandler) { *ppv = &uihandler; AddRef(); return S_OK; }
+        if (riid == IID_IInternetSecurityManager) { assert(false); *ppv = &isecm; AddRef(); return S_OK; }
         return E_NOINTERFACE;
     }
     ULONG STDMETHODCALLTYPE AddRef() {
@@ -1080,83 +1080,7 @@ struct s::wui::window::Impl : public IUnknown {
         HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID /*riid*/, LPOLESTR* /*rgszNames*/, UINT /*cNames*/, LCID /*lcid*/, DISPID* /*rgDispId*/) { return E_FAIL; }
 
 
-        void dispVar(const std::string& ind, VARIANT& var) {
-            switch (var.vt) {
-            case VT_EMPTY:
-            {
-                std::cout << ind << "  EMPTY" << std::endl;
-                break;
-            }
-            case VT_I4:
-            {
-                std::cout << ind << "  I4:" << var.lVal << std::endl;
-                break;
-            }
-            case VT_BOOL:
-            {
-                std::cout << ind << "  BOOL:" << var.boolVal << std::endl;
-                break;
-            }
-            case VT_BSTR:
-            {
-                std::cout << ind << "  BSTR:" << var.bstrVal;
-                std::cout.flush();
-                if (var.bstrVal) {
-                    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-                    auto curl = convertor.to_bytes(var.bstrVal);
-                    std::cout << curl;
-                }
-                std::cout << std::endl;
-                break;
-            }
-            case VT_DISPATCH:
-            {
-                std::cout << ind << "  VT_DISPATCH:" << var.pdispVal << std::endl;
-                break;
-            }
-            case VT_BYREF | VT_BSTR:
-            {
-                std::cout << ind << "  REF-BSTR:" << var.pbstrVal;
-                if (var.pbstrVal) {
-                    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-                    auto curl = convertor.to_bytes(*(var.pbstrVal));
-                    std::cout << curl;
-                }
-                std::cout << std::endl;
-                break;
-            }
-            case VT_BYREF | VT_BOOL:
-            {
-                std::cout << ind << "  REF-BOOL:" << var.pboolVal << std::endl;
-                break;
-            }
-            case VT_BYREF | VT_VARIANT:
-            {
-                std::cout << ind << "  REF-VAR:" << var.pvarVal << std::endl;
-                if (var.pvarVal) {
-                    dispVar(ind + "  ", *(var.pvarVal));
-                }
-                break;
-            }
-            default:
-            {
-                std::cout << ind << "  vt:" << var.vt << std::endl;
-                assert(false);
-            }
-            }
-        }
-
-        void dispVal(DISPPARAMS* Params) {
-            std::cout << "argc:" << Params->cArgs << std::endl;
-            for (int i = 0; i < Params->cArgs; ++i) {
-                std::cout << "-i:" << i << std::endl;
-                dispVar("  ", (Params->rgvarg[i]));
-            }
-        }
-
         HRESULT STDMETHODCALLTYPE Invoke(DISPID dispIdMember, REFIID /*riid*/, LCID /*lcid*/, WORD /*wFlags*/, DISPPARAMS* Params, VARIANT* pVarResult, EXCEPINFO* /*pExcepInfo*/, UINT* /*puArgErr*/) {
-            //std::cout << "Invoke:" << dispIdMember << ", argc:" << Params->cArgs << std::endl;
-            //dispVal(Params);
             switch (dispIdMember) { // DWebBrowserEvents2
             case DISPID_BEFORENAVIGATE2:
                 webf->BeforeNavigate2(Params->rgvarg[5].pvarVal->bstrVal, Params->rgvarg[0].pboolVal);
@@ -1286,16 +1210,12 @@ struct s::wui::window::Impl : public IUnknown {
             TRACER("TInternetProtocol::Start");
             std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
             std::string url(convertor.to_bytes(szUrl));
-            std::cout << "XURL:" << url << std::endl;
             auto& pdata = impl_.getEmbeddedSource(url);
             data = std::get<0>(pdata);
             dataLen = std::get<1>(pdata);
             auto& mimetype = std::get<2>(pdata);
             dataCurrPos = 0;
-            std::cout << "TInternetProtocol::Start::URL:" << url << ", " << mimetype << ", len:" << dataLen << std::endl;
-            if (url == "index.js") {
-                std::cout << data << std::endl;
-            }
+            //std::cout << "TInternetProtocol::Start::URL:" << url << ", " << mimetype << ", len:" << dataLen << std::endl;
 
             pIProtSink->ReportProgress(BINDSTATUS_FINDINGRESOURCE, L"");
             pIProtSink->ReportProgress(BINDSTATUS_CONNECTING, L"");
@@ -1312,6 +1232,7 @@ struct s::wui::window::Impl : public IUnknown {
         STDMETHODIMP Resume() { return E_NOTIMPL; }
         STDMETHODIMP Read(void *pv, ULONG cb, ULONG *pcbRead) {
             TRACER("TInternetProtocol::Read");
+            //std::cout << "TInternetProtocol::Read:len:" << dataLen << ":" << dataCurrPos << std::endl;
             if (!data)
                 return S_FALSE;
             size_t dataAvail = dataLen - dataCurrPos;
@@ -1371,6 +1292,69 @@ struct s::wui::window::Impl : public IUnknown {
         STDMETHODIMP LockServer(BOOL /*fLock*/) { return S_OK; }
     } ipfac;
 
+    struct TInternetSecurityManager : public IInternetSecurityManager
+    {
+        s::wui::window::Impl *webf;
+
+        // IUnknown
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
+        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
+        ULONG STDMETHODCALLTYPE Release() { TRACER("TInternetProtocolInfo::Release"); return webf->Release(); }
+
+        STDMETHODIMP SetSecuritySite(IInternetSecurityMgrSite *pSite) {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP GetSecuritySite(IInternetSecurityMgrSite **ppSite) {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP MapUrlToZone(LPCWSTR pwszUrl, DWORD *pdwZone, DWORD dwFlags) {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+#define SECURITY_DOMAIN "file:"
+
+        STDMETHODIMP GetSecurityId(LPCWSTR pwszUrl, BYTE *pbSecurityId, DWORD *pcbSecurityId, DWORD_PTR dwReserved) {
+            if (*pcbSecurityId >= 512)
+            {
+                memset(pbSecurityId, 0, *pcbSecurityId);
+                strncpy_s((char*)pbSecurityId, *pcbSecurityId, SECURITY_DOMAIN, strlen(SECURITY_DOMAIN));
+                pbSecurityId[strlen(SECURITY_DOMAIN) + 1] = 0;
+                pbSecurityId[strlen(SECURITY_DOMAIN) + 2] = 0;
+                pbSecurityId[strlen(SECURITY_DOMAIN) + 3] = 0;
+                pbSecurityId[strlen(SECURITY_DOMAIN) + 4] = 0;
+
+                *pcbSecurityId = (DWORD)strlen(SECURITY_DOMAIN) + 4;
+                return S_OK;
+            }
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP ProcessUrlAction(LPCWSTR pwszUrl, DWORD dwAction, BYTE *pPolicy, DWORD cbPolicy, BYTE *pContext, DWORD cbContext, DWORD dwFlags, DWORD dwReserved) {
+            DWORD dwPolicy = URLPOLICY_ALLOW;
+            if (cbPolicy >= sizeof(DWORD))
+            {
+                *(DWORD*)pPolicy = dwPolicy;
+                return S_OK;
+            }
+
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP QueryCustomPolicy( LPCWSTR pwszUrl, REFGUID guidKey, BYTE **ppPolicy, DWORD *pcbPolicy, BYTE *pContext, DWORD cbContext, DWORD dwReserved) {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP SetZoneMapping(DWORD dwZone, LPCWSTR lpszPattern, DWORD dwFlags) {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+        STDMETHODIMP GetZoneMappings(DWORD dwZone, IEnumString **ppenumString, DWORD dwFlags) {
+            return INET_E_DEFAULT_ACTION;
+        }
+
+    } isecm;
 
     // Register our protocol so that urlmon will call us for every
     // url that starts with HW_PROTO_PREFIX
@@ -1438,14 +1422,20 @@ struct s::wui::window::Impl : public IUnknown {
         ::InvalidateRect(hhost, 0, true);
     }
 
+    std::unique_ptr<WinObject> nproxy_;
     inline void addNativeObject(s::js::objectbase& jo, const std::string& body) {
+        TRACER("addNativeObject");
+        //std::cout << "addNativeObject:" << jo.name << ":" << jo.nname << ":" << body << std::endl;
+        WinObject* nobj = new WinObject(jo);
+        addCustomObject(nobj, jo.nname);
+        eval(body);
     }
 
-    std::unique_ptr<WinObject> nproxy_;
+    // todo: remove this
     inline void addObject(const std::string& name) {
         TRACER("addObject");
-        nproxy_ = std::make_unique<WinObject>(browser_);
-        addCustomObject(nproxy_.get(), name);
+        //nproxy_ = std::make_unique<WinObject>(wb_);
+        //addCustomObject(nproxy_.get(), name);
     }
 
     void go(const std::string& fn);
@@ -1467,7 +1457,7 @@ struct s::wui::window::Impl : public IUnknown {
 
     unsigned int isnaving;    // bitmask
 
-    s::wui::window& browser_;
+    s::wui::window& wb_;
     HWND hhost;               // This is the window that hosts us
     IWebBrowser2 *ibrowser;   // Our pointer to the browser itself. Released in Close().
     DWORD cookie;             // By this cookie shall the watcher be known
@@ -1478,7 +1468,7 @@ struct s::wui::window::Impl : public IUnknown {
 
 std::vector<s::wui::window::Impl*> s::wui::window::Impl::wlist;
 
-s::wui::window::Impl::Impl(s::wui::window& w) : browser_(w) {
+s::wui::window::Impl::Impl(s::wui::window& w) : wb_(w) {
     TRACER("window::Impl::Impl");
     ref = 0;
     clientsite.webf = this;
@@ -1489,6 +1479,7 @@ s::wui::window::Impl::Impl(s::wui::window& w) : browser_(w) {
     showui.webf = this;
     ipfac.webf = this;
     ipinf.webf = this;
+    isecm.webf = this;
     this->hhost = 0;
     ibrowser = 0;
     cookie = 0;
@@ -1679,8 +1670,8 @@ LRESULT CALLBACK s::wui::window::Impl::WebformWndProc(HWND hwnd, UINT msg, WPARA
         if (cs->style & (WS_HSCROLL | WS_VSCROLL)) {
             SetWindowLongPtr(hwnd, GWL_STYLE, cs->style & ~(WS_HSCROLL | WS_VSCROLL));
         }
-        if (impl->browser_.onOpen) {
-            impl->browser_.onOpen();
+        if (impl->wb_.onOpen) {
+            impl->wb_.onOpen();
         }
         break;
     case WM_DESTROY:
@@ -1689,8 +1680,8 @@ LRESULT CALLBACK s::wui::window::Impl::WebformWndProc(HWND hwnd, UINT msg, WPARA
         SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
         break;
     case WM_CLOSE:
-        if (impl->browser_.onClose) {
-            impl->browser_.onClose();
+        if (impl->wb_.onClose) {
+            impl->wb_.onClose();
         }
         break;
     case WM_SETFOCUS:
@@ -1754,31 +1745,32 @@ void s::wui::window::Impl::go(const std::string& urlx) {
     // nb. the events know not to bother us for currentlynav.
     // (Special case: maybe it's already loaded by the time we get here!)
     if ((isnaving & PreDocumentComplete) == 0) {
+        // todo: remove this
         WPARAM w = (GetWindowLong(hhost, GWL_ID) & 0xFFFF) | ((WEBFN_LOADED & 0xFFFF) << 16);
         PostMessage(GetParent(hhost), WM_COMMAND, w, (LPARAM)hhost);
-        addObject(("nproxy"));
-        if (browser_.onLoad) {
-            browser_.onLoad(url);
-        }
+        NavigateComplete2(ws.c_str());
     }
     isnaving &= ~PreNavigateComplete;
     return;
 }
 
+// todo: remove this
 void s::wui::window::Impl::DocumentComplete(const wchar_t* /*wurl*/) {
-    TRACER1("DocumentComplete");
+    TRACER("DocumentComplete");
     isnaving &= ~PreDocumentComplete;
     if (isnaving & PreNavigateComplete) {
         return; // we're in the middle of Go(), so the notification will be handled there
     }
 
+    // todo: remove this
     WPARAM w = (GetWindowLong(hhost, GWL_ID) & 0xFFFF) | ((WEBFN_LOADED & 0xFFFF) << 16);
     PostMessage(hhost, WM_COMMAND, w, (LPARAM)hhost);
     SetFocus();
 }
 
+// todo: remove this
 void s::wui::window::Impl::BeforeNavigate2(const wchar_t* wurl, short *cancel) {
-    TRACER1("BeforeNavigate2");
+    TRACER("BeforeNavigate2");
     *cancel = FALSE;
     int oldisnav = isnaving;
     isnaving &= ~PreBeforeNavigate;
@@ -1789,20 +1781,20 @@ void s::wui::window::Impl::BeforeNavigate2(const wchar_t* wurl, short *cancel) {
     *cancel = TRUE;
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
     curl = convertor.to_bytes(wurl);
-    std::cout << "CURL:" << curl << std::endl;
+    //std::cout << "CURL:" << curl << std::endl;
 
     WPARAM w = (GetWindowLong(hhost, GWL_ID) & 0xFFFF) | ((WEBFN_CLICKED & 0xFFFF) << 16);
     PostMessage(GetParent(hhost), WM_COMMAND, w, (LPARAM)hhost);
 }
 
 void s::wui::window::Impl::NavigateComplete2(const wchar_t* burl) {
-    TRACER1("NavigateComplete2");
+    TRACER("NavigateComplete2");
     std::wstring wurl = burl;
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
     std::string url(convertor.to_bytes(wurl));
-    addObject(("nproxy"));
-    if (browser_.onLoad) {
-        browser_.onLoad(url);
+    addCommonPage(wb_);
+    if (wb_.onLoad) {
+        wb_.onLoad(url);
     }
 }
 

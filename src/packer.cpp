@@ -65,37 +65,22 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
         ifs.read((char*)buf, 16);
         auto len = ifs.gcount();
         buf[len] = 0;
-        bool inWS = false;
-        for(int i = 0; i < len; ++i){
-            unsigned int ch = buf[i];
-            switch (ch) {
-            case '\r':
-                continue;
-            case '\n':
-            case '\t':
-            case ' ':
-                if (inWS) {
-                    continue;
-                }
-                inWS = true;
-                ch = ' ';
-                break;
-            default:
-                inWS = false;
-                break;
-            }
-            s += ch;
-        }
+
+        s += std::string((const char*)buf, len);
+
+        size_t slen = 0;
         while((s.length() >= 16) || (len < 16)){
             size_t x = 0;
             for (auto& ch : s) {
                 char hex[10];
                 snprintf(hex, 10, "%02x", (unsigned char)ch);
                 ofsrc << "0x" << hex << ", ";
+                ++slen;
                 if (++x == 16) {
                     break;
                 }
             }
+
             x = 0;
             bool inStar = false;
             ofsrc << "/* ";
@@ -131,7 +116,7 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
                 break;
             }
         }
-        tlen += len;
+        tlen += slen;
         if(len < 16) {
             break;
         }
