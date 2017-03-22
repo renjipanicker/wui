@@ -700,54 +700,6 @@ namespace {
     static const GUID CLSID_TInternetProtocol = { 0xf1ec293f, 0xdbbd, 0x4a4b,{ 0x94, 0xf4, 0xfa, 0x52, 0xba, 0xb, 0xa6, 0xee } };
 }
 
-class s::application::Impl {
-    s::application& app;
-public:
-    inline Impl(s::application& a) : app(a) {
-        ::_tzset();
-        if (::OleInitialize(NULL) != S_OK) {
-            throw std::runtime_error(std::string("OleInitialize() failed:") + GetLastErrorAsString());
-        }
-
-        char apath[MAX_PATH];
-        DWORD rv = ::GetModuleFileNameA(NULL, apath, MAX_PATH);
-        if (rv == 0) {
-            DWORD ec = GetLastError();
-            assert(ec != ERROR_SUCCESS);
-            throw std::runtime_error(std::string("Internal error retrieving process path:") + GetLastErrorAsString());
-        }
-
-        app.path = apath;
-        char *ptr = strrchr(apath, '\\');
-        if (ptr != NULL)
-            strcpy_s(apath, MAX_PATH, ptr + 1);
-
-        app.name = apath;
-    }
-
-    inline ~Impl() {
-        ::OleUninitialize();
-    }
-
-    inline int loop();
-
-    inline void exit(const int& exitcode) {
-        ::PostQuitMessage(exitcode);
-    }
-
-    inline std::string datadir(const std::string& /*an*/) const {
-        char chPath[MAX_PATH];
-        /// \todo Use SHGetKnownFolderPath for vista and later.
-        HRESULT hr = ::SHGetFolderPathA(NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, chPath);
-        if(!SUCCEEDED(hr)) {
-            throw std::runtime_error(std::string("Internal error retrieving data directory:") + GetErrorAsString(hr));
-        }
-        std::string data(chPath);
-        std::replace(data.begin(), data.end(), '\\', '/');
-        return data;
-    }
-};
-
 #define NOTIMPLEMENTED _ASSERT(0); return E_NOTIMPL
 
 namespace {
@@ -859,6 +811,9 @@ namespace {
             LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult,
             EXCEPINFO *pExcepInfo, UINT *puArgErr);
     };
+
+    std::vector<s::wui::window::Impl*> wlist;
+
 }
 
 WinObject::WinObject(s::js::objectbase& jo) : jo_(jo), ref(0) {
@@ -961,13 +916,347 @@ const LPCWSTR WEBFORM_CLASS = L"WebUIWindowClass";
 #define WEBFN_LOADED       3
 
 struct s::wui::window::Impl : public IUnknown {
-    static std::vector<s::wui::window::Impl*> wlist;
     ContentSourceData csd;
 
     long ref;
 
     inline const auto& getEmbeddedSource(const std::string& url) {
         return csd.getEmbeddedSource(url);
+    }
+
+    inline void Close(){
+        if(ibrowser != 0){
+            CComPtr<IConnectionPointContainer> cpc;
+            ibrowser->QueryInterface(IID_IConnectionPointContainer, (void**)&cpc);
+            if(cpc != 0){
+                CComPtr<IConnectionPoint> cp;
+                cpc->FindConnectionPoint(DIID_DWebBrowserEvents2, &cp);
+                if(cp != 0){
+                    cp->Unadvise(cookie);
+                }
+            }
+
+            CComPtr<IOleObject> iole;
+            ibrowser->QueryInterface(IID_IOleObject, (void**)&iole);
+            if(iole != 0){
+                iole->Close(OLECLOSE_NOSAVE);
+            }
+
+            ibrowser->Release();
+            ibrowser = 0;
+        }
+    }
+
+    inline void SetFocus(){
+        if(ibrowser != 0){
+            CComPtr<IOleObject> iole;
+            ibrowser->QueryInterface(IID_IOleObject, (void**)&iole);
+            if(iole != 0){
+                iole->DoVerb(OLEIVERB_UIACTIVATE, NULL, &clientsite, 0, hhost, 0);
+            }
+        }
+    }
+
+    inline IHTMLDocument2* GetDoc(){
+        CComPtr<IDispatch> xdispatch;
+        HRESULT hr = ibrowser->get_Document(&xdispatch);
+        if(xdispatch == 0){
+            throw std::runtime_error(std::string("unable to get document:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        CComPtr<IHTMLDocument2> doc;
+        xdispatch->QueryInterface(IID_IHTMLDocument2, (void**)&doc);
+        return doc;
+    }
+
+    inline void addCustomObject(IDispatch* custObj, const std::string& name){
+        TRACER("addCustomObject");
+
+        HRESULT hr;
+        CComPtr<IHTMLDocument2> doc = GetDoc();
+        if(doc == NULL){
+            throw std::runtime_error(std::string("Invalid document state:") + GetLastErrorAsString());
+        }
+
+        CComPtr<IHTMLWindow2> win;
+        hr = doc->get_parentWindow(&win);
+        if(win == NULL){
+            throw std::runtime_error(std::string("unable to get parent window:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        CComPtr<IDispatchEx> winEx;
+        hr = win->QueryInterface(&winEx);
+        if(winEx == NULL){
+            throw std::runtime_error(std::string("unable to get DispatchEx:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        _bstr_t objName(name.c_str());
+
+        DISPID dispid;
+        hr = winEx->GetDispID(objName, fdexNameEnsure, &dispid);
+        if(FAILED(hr)){
+            throw std::runtime_error(std::string("unable to get DispatchID:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        DISPID namedArgs[] = {DISPID_PROPERTYPUT};
+        DISPPARAMS params;
+        params.rgvarg = new VARIANT[1];
+        params.rgvarg[0].pdispVal = custObj;
+        params.rgvarg[0].vt = VT_DISPATCH;
+        params.rgdispidNamedArgs = namedArgs;
+        params.cArgs = 1;
+        params.cNamedArgs = 1;
+
+        hr = winEx->InvokeEx(dispid, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &params, NULL, NULL, NULL);
+        if(FAILED(hr)){
+            throw std::runtime_error(std::string("unable to invoke JSE:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+    }
+
+    inline bool open(){
+        TRACER("open");
+        WNDCLASSEX wcex = {0};
+        HINSTANCE hInstance = GetModuleHandle(0);
+        if(!::GetClassInfoExW(hInstance, WEBFORM_CLASS, &wcex)){
+            wcex.cbSize = sizeof(WNDCLASSEXW);
+            wcex.style = CS_HREDRAW | CS_VREDRAW;
+            wcex.lpfnWndProc = (WNDPROC)WebformWndProc;
+            wcex.hInstance = hInstance;
+            wcex.lpszClassName = WEBFORM_CLASS;
+            wcex.cbWndExtra = sizeof(s::wui::window::Impl*);
+            RegisterClassExW(&wcex);
+        }
+        HWND hwndParent = 0;
+        UINT id = 0;
+        UINT flags = WS_CLIPSIBLINGS | WS_VSCROLL;
+        if(hwndParent == 0){
+            flags |= WS_OVERLAPPEDWINDOW;
+        } else{
+            flags |= WS_CHILDWINDOW;
+        }
+
+        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+        std::wstring title(convertor.from_bytes(s::app().title));
+
+        HWND hWnd = CreateWindowW(WEBFORM_CLASS, title.c_str(), flags, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, (HMENU)id, hInstance, (LPVOID)this);
+        if(hWnd == NULL){
+            throw std::runtime_error(std::string("Could not create window:") + GetLastErrorAsString());
+        }
+        ::ShowWindow(hWnd, SW_SHOW);
+        ::UpdateWindow(hWnd);
+        return (hWnd != 0);
+    }
+
+
+    // Register our protocol so that urlmon will call us for every
+    // url that starts with HW_PROTO_PREFIX
+    inline void RegisterInternetProtocolFactory(){
+        CComPtr<IInternetSession> internetSession;
+        HRESULT hr = ::CoInternetGetSession(0, &internetSession, 0);
+        assert(!FAILED(hr));
+        hr = internetSession->RegisterNameSpace(&ipfac, CLSID_TInternetProtocol, empfxw.c_str(), 0, nullptr, 0);
+        assert(!FAILED(hr));
+    }
+
+    inline void UnregisterInternetProtocolFactory(){
+        CComPtr<IInternetSession> internetSession;
+        HRESULT hr = ::CoInternetGetSession(0, &internetSession, 0);
+        assert(!FAILED(hr));
+        internetSession->UnregisterNameSpace(&ipfac, empfxw.c_str());
+    }
+
+    inline void setDefaultMenu(){
+    }
+
+    inline void setMenu(const menu& /*m*/){
+        throw std::runtime_error(std::string("Not implemented: setMenu"));
+    }
+
+    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst){
+        csd.setEmbeddedSource(lst);
+    }
+
+    inline void setContentSourceResource(const std::string& path){
+        csd.setResourceSource(path);
+    }
+
+    inline void eval(const std::string& str){
+        CComPtr<IHTMLDocument2> doc = GetDoc();
+        if(doc == NULL){
+            throw std::runtime_error(std::string("Unable to get document object:") + GetLastErrorAsString());
+        }
+
+        CComPtr<IHTMLWindow2> win;
+        doc->get_parentWindow(&win);
+        if(win == NULL){
+            throw std::runtime_error(std::string("Unable to get parent window:") + GetLastErrorAsString());
+        }
+
+        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+        std::wstring rv(convertor.from_bytes(str));
+        VARIANT v;
+        VariantInit(&v);
+        HRESULT hr = win->execScript((BSTR)rv.c_str(), NULL, &v);
+        if(hr != S_OK){
+            throw std::runtime_error(std::string("JavaScript execution error:") + GetErrorAsString(hr));
+        }
+
+        VariantClear(&v);
+        ::InvalidateRect(hhost, 0, true);
+    }
+
+    inline void addNativeObject(s::js::objectbase& jo, const std::string& body){
+        TRACER("addNativeObject");
+        //std::cout << "addNativeObject:" << jo.name << ":" << jo.nname << ":" << body << std::endl;
+        WinObject* nobj = new WinObject(jo);
+        addCustomObject(nobj, jo.nname);
+        eval(body);
+    }
+
+    inline void go(const std::string& urlx){
+        auto url = csd.normaliseUrl(urlx);
+
+        // Navigate to the new one and delete the old one
+        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+        std::wstring ws(convertor.from_bytes(url));
+
+        VARIANT v;
+        v.vt = VT_I4;
+        v.lVal = 0; //v.lVal=navNoHistory;
+        HRESULT hr = ibrowser->Navigate((BSTR)ws.c_str(), &v, NULL, NULL, NULL);
+    }
+
+    inline bool setupOle(){
+        TRACER("setupOle");
+        hasscrollbars = (GetWindowLongPtr(hhost, GWL_STYLE)&(WS_HSCROLL | WS_VSCROLL)) != 0;
+
+        RECT rc;
+        GetClientRect(hhost, &rc);
+
+        HRESULT hr;
+        CComPtr<IOleObject> iole;
+        hr = CoCreateInstance(CLSID_WebBrowser, NULL, CLSCTX_INPROC_SERVER, IID_IOleObject, (void**)&iole);
+        if(hr != S_OK){
+            throw std::runtime_error(std::string("CoCreateInstance error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        hr = iole->SetClientSite(&clientsite);
+        if(hr != S_OK){
+            throw std::runtime_error(std::string("SetClientSite error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        hr = iole->SetHostNames(L"MyHost", L"MyDoc");
+        if(hr != S_OK){
+            throw std::runtime_error(std::string("SetHostNames error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        hr = OleSetContainedObject(iole, TRUE);
+        if(hr != S_OK){
+            throw std::runtime_error(std::string("OleSetContainedObject error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        hr = iole->DoVerb(OLEIVERB_SHOW, 0, &clientsite, 0, hhost, &rc);
+        if(hr != S_OK){
+            throw std::runtime_error(std::string("DoVerb error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        bool connected = false;
+        CComPtr<IConnectionPointContainer> cpc;
+        hr = iole->QueryInterface(IID_IConnectionPointContainer, (void**)&cpc);
+        if(cpc != 0){
+            CComPtr<IConnectionPoint> cp;
+            hr = cpc->FindConnectionPoint(DIID_DWebBrowserEvents2, &cp);
+            if(cp != 0){
+                cp->Advise((IDispatch*)this, &cookie);
+                connected = true;
+            }
+        }
+
+        if(!connected){
+            throw std::runtime_error(std::string("Not connected error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+        }
+
+        iole->QueryInterface(IID_IWebBrowser2, (void**)&ibrowser);
+        return true;
+    }
+
+    inline bool hookMessage(MSG& msg){
+        if((msg.message >= WM_KEYFIRST) && (msg.message <= WM_KEYLAST)){
+            CComPtr<IOleInPlaceActiveObject> ioipo;
+            ibrowser->QueryInterface(IID_IOleInPlaceActiveObject, (void**)&ioipo);
+            assert(ioipo);
+            if(ioipo != 0){
+                HRESULT hr = ioipo->TranslateAccelerator(&msg);
+                if(hr == S_OK){
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    static LRESULT CALLBACK WebformWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
+        if(msg == WM_NCCREATE){
+            s::wui::window::Impl* impl = (s::wui::window::Impl*)((LPCREATESTRUCT(lParam))->lpCreateParams);
+            impl->hhost = hwnd;
+            impl->AddRef();
+            impl->setupOle();
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)impl);
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+        }
+
+        s::wui::window::Impl* impl = (s::wui::window::Impl*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+        if(impl == 0){
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+        }
+
+        CREATESTRUCTA* cs = 0;
+
+        switch(msg){
+        case WM_CREATE:
+            cs = (CREATESTRUCTA*)lParam;
+            if(cs->style & (WS_HSCROLL | WS_VSCROLL)){
+                SetWindowLongPtr(hwnd, GWL_STYLE, cs->style & ~(WS_HSCROLL | WS_VSCROLL));
+            }
+            if(impl->wb_.onOpen){
+                impl->wb_.onOpen();
+            }
+            break;
+        case WM_DESTROY:
+            impl->Close();
+            impl->Release();
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+            break;
+        case WM_CLOSE:
+            if(impl->wb_.onClose){
+                impl->wb_.onClose();
+            }
+            break;
+        case WM_SETFOCUS:
+            impl->SetFocus();
+            break;
+        case WM_SIZE:
+            impl->ibrowser->put_Width(LOWORD(lParam));
+            impl->ibrowser->put_Height(HIWORD(lParam));
+            break;
+        };
+        return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    inline void NavigateComplete2(const wchar_t* burl){
+        TRACER("NavigateComplete2");
+        std::wstring wurl = burl;
+        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+        std::string url(convertor.to_bytes(wurl));
+        addCommonPage(wb_);
+        if(wb_.onLoad){
+            wb_.onLoad(url);
+        }
+    }
+
+    inline void DocumentComplete(const wchar_t *url){
+        TRACER("DocumentComplete");
+        SetFocus();
     }
 
     // IUnknown
@@ -1082,9 +1371,6 @@ struct s::wui::window::Impl : public IUnknown {
 
         HRESULT STDMETHODCALLTYPE Invoke(DISPID dispIdMember, REFIID /*riid*/, LCID /*lcid*/, WORD /*wFlags*/, DISPPARAMS* Params, VARIANT* pVarResult, EXCEPINFO* /*pExcepInfo*/, UINT* /*puArgErr*/) {
             switch (dispIdMember) { // DWebBrowserEvents2
-            case DISPID_BEFORENAVIGATE2:
-                webf->BeforeNavigate2(Params->rgvarg[5].pvarVal->bstrVal, Params->rgvarg[0].pboolVal);
-                break;
             case DISPID_NAVIGATECOMPLETE2:
                 webf->NavigateComplete2(Params->rgvarg[0].pvarVal->bstrVal);
                 break;
@@ -1356,106 +1642,37 @@ struct s::wui::window::Impl : public IUnknown {
 
     } isecm;
 
-    // Register our protocol so that urlmon will call us for every
-    // url that starts with HW_PROTO_PREFIX
-    void RegisterInternetProtocolFactory()
-    {
-        CComPtr<IInternetSession> internetSession;
-        HRESULT hr = ::CoInternetGetSession(0, &internetSession, 0);
-        assert(!FAILED(hr));
-        hr = internetSession->RegisterNameSpace(&ipfac, CLSID_TInternetProtocol, empfxw.c_str(), 0, nullptr, 0);
-        assert(!FAILED(hr));
+    inline Impl(s::wui::window& w) : wb_(w){
+        TRACER("window::Impl::Impl");
+        ref = 0;
+        clientsite.webf = this;
+        site.webf = this;
+        frame.webf = this;
+        dispatch.webf = this;
+        uihandler.webf = this;
+        showui.webf = this;
+        ipfac.webf = this;
+        ipinf.webf = this;
+        isecm.webf = this;
+        this->hhost = 0;
+        ibrowser = 0;
+        cookie = 0;
+        wlist.push_back(this);
+        RegisterInternetProtocolFactory();
     }
 
-    void UnregisterInternetProtocolFactory()
-    {
-        CComPtr<IInternetSession> internetSession;
-        HRESULT hr = ::CoInternetGetSession(0, &internetSession, 0);
-        assert(!FAILED(hr));
-        internetSession->UnregisterNameSpace(&ipfac, empfxw.c_str());
-    }
+    inline ~Impl(){
+        TRACER("window::Impl::~Impl");
+        assert(ref <= 1); // \todo: sometimes one final IOleClientSite::Release() does not get called
 
-    Impl(s::wui::window& w);
-    ~Impl();
-    void Close();
-    void SetFocus();
-    void addCustomObject(IDispatch* custObj, const std::string& name);
-    //
-    bool open();
-    inline void setDefaultMenu() {
-    }
-
-    inline void setMenu(const menu& /*m*/) {
-        throw std::runtime_error(std::string("Not implemented: setMenu"));
-    }
-
-    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
-        csd.setEmbeddedSource(lst);
-    }
-
-    inline void setContentSourceResource(const std::string& path) {
-        csd.setResourceSource(path);
-    }
-
-    inline void eval(const std::string& str) {
-        CComPtr<IHTMLDocument2> doc = GetDoc();
-        if (doc == NULL) {
-            throw std::runtime_error(std::string("Unable to get document object:") + GetLastErrorAsString());
+        for(auto it = wlist.begin(), ite = wlist.end(); it != ite; ++it){
+            if(*it == this){
+                wlist.erase(it);
+                break;
+            }
         }
-
-        CComPtr<IHTMLWindow2> win;
-        doc->get_parentWindow(&win);
-        if (win == NULL) {
-            throw std::runtime_error(std::string("Unable to get parent window:") + GetLastErrorAsString());
-        }
-
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-        std::wstring rv(convertor.from_bytes(str));
-        VARIANT v;
-        VariantInit(&v);
-        HRESULT hr = win->execScript((BSTR)rv.c_str(), NULL, &v);
-        if (hr != S_OK) {
-            throw std::runtime_error(std::string("JavaScript execution error:") + GetErrorAsString(hr));
-        }
-
-        VariantClear(&v);
-        ::InvalidateRect(hhost, 0, true);
+        UnregisterInternetProtocolFactory();
     }
-
-    std::unique_ptr<WinObject> nproxy_;
-    inline void addNativeObject(s::js::objectbase& jo, const std::string& body) {
-        TRACER("addNativeObject");
-        //std::cout << "addNativeObject:" << jo.name << ":" << jo.nname << ":" << body << std::endl;
-        WinObject* nobj = new WinObject(jo);
-        addCustomObject(nobj, jo.nname);
-        eval(body);
-    }
-
-    // todo: remove this
-    inline void addObject(const std::string& name) {
-        TRACER("addObject");
-        //nproxy_ = std::make_unique<WinObject>(wb_);
-        //addCustomObject(nproxy_.get(), name);
-    }
-
-    void go(const std::string& fn);
-    IHTMLDocument2 *GetDoc();
-    bool setupOle();
-    bool hookMessage(MSG& msg);
-    static LRESULT CALLBACK WebformWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-    //
-    void BeforeNavigate2(const wchar_t *url, short *cancel);
-    void NavigateComplete2(const wchar_t *url);
-    void DocumentComplete(const wchar_t *url);
-    enum NavState {
-        PreBeforeNavigate = 0x01,
-        PreDocumentComplete = 0x02,
-        PreNavigateComplete = 0x04,
-        All = 0x07,
-    };
-
-    unsigned int isnaving;    // bitmask
 
     s::wui::window& wb_;
     HWND hhost;               // This is the window that hosts us
@@ -1466,378 +1683,81 @@ struct s::wui::window::Impl : public IUnknown {
     std::string curl;         // This was the url that the user just clicked on
 };
 
-std::vector<s::wui::window::Impl*> s::wui::window::Impl::wlist;
-
-s::wui::window::Impl::Impl(s::wui::window& w) : wb_(w) {
-    TRACER("window::Impl::Impl");
-    ref = 0;
-    clientsite.webf = this;
-    site.webf = this;
-    frame.webf = this;
-    dispatch.webf = this;
-    uihandler.webf = this;
-    showui.webf = this;
-    ipfac.webf = this;
-    ipinf.webf = this;
-    isecm.webf = this;
-    this->hhost = 0;
-    ibrowser = 0;
-    cookie = 0;
-    isnaving = 0;
-    wlist.push_back(this);
-    RegisterInternetProtocolFactory();
-}
-
-s::wui::window::Impl::~Impl() {
-    TRACER("window::Impl::~Impl");
-    assert(ref <= 1); // \todo: sometimes one final IOleClientSite::Release() does not get called
-
-    for (auto it = wlist.begin(), ite = wlist.end(); it != ite; ++it) {
-        if (*it == this) {
-            wlist.erase(it);
-            break;
-        }
-    }
-    UnregisterInternetProtocolFactory();
-}
-
-void s::wui::window::Impl::Close() {
-    if (ibrowser != 0) {
-        CComPtr<IConnectionPointContainer> cpc;
-        ibrowser->QueryInterface(IID_IConnectionPointContainer, (void**)&cpc);
-        if (cpc != 0) {
-            CComPtr<IConnectionPoint> cp;
-            cpc->FindConnectionPoint(DIID_DWebBrowserEvents2, &cp);
-            if (cp != 0) {
-                cp->Unadvise(cookie);
-            }
+class s::application::Impl{
+    s::application& app;
+public:
+    inline Impl(s::application& a) : app(a){
+        ::_tzset();
+        if(::OleInitialize(NULL) != S_OK){
+            throw std::runtime_error(std::string("OleInitialize() failed:") + GetLastErrorAsString());
         }
 
-        CComPtr<IOleObject> iole;
-        ibrowser->QueryInterface(IID_IOleObject, (void**)&iole);
-        if (iole != 0) {
-            iole->Close(OLECLOSE_NOSAVE);
+        char apath[MAX_PATH];
+        DWORD rv = ::GetModuleFileNameA(NULL, apath, MAX_PATH);
+        if(rv == 0){
+            DWORD ec = GetLastError();
+            assert(ec != ERROR_SUCCESS);
+            throw std::runtime_error(std::string("Internal error retrieving process path:") + GetLastErrorAsString());
         }
 
-        ibrowser->Release();
-        ibrowser = 0;
-    }
-}
+        app.path = apath;
+        char *ptr = strrchr(apath, '\\');
+        if(ptr != NULL)
+            strcpy_s(apath, MAX_PATH, ptr + 1);
 
-void s::wui::window::Impl::SetFocus() {
-    if (ibrowser != 0) {
-        CComPtr<IOleObject> iole;
-        ibrowser->QueryInterface(IID_IOleObject, (void**)&iole);
-        if (iole != 0) {
-            iole->DoVerb(OLEIVERB_UIACTIVATE, NULL, &clientsite, 0, hhost, 0);
+        app.name = apath;
+    }
+
+    inline ~Impl(){
+        ::OleUninitialize();
+    }
+
+    inline int loop(){
+        if(s::app().onInit){
+            s::app().onInit();
         }
-    }
-}
 
-bool s::wui::window::Impl::setupOle() {
-    TRACER("setupOle");
-    hasscrollbars = (GetWindowLongPtr(hhost, GWL_STYLE)&(WS_HSCROLL | WS_VSCROLL)) != 0;
+        //auto hInstance = ::GetModuleHandle(NULL);
+        //HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_APP));
+        HACCEL hAccelTable = 0;
 
-    RECT rc;
-    GetClientRect(hhost, &rc);
-
-    HRESULT hr;
-    CComPtr<IOleObject> iole;
-    hr = CoCreateInstance(CLSID_WebBrowser, NULL, CLSCTX_INPROC_SERVER, IID_IOleObject, (void**)&iole);
-    if (hr != S_OK) {
-        throw std::runtime_error(std::string("CoCreateInstance error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    hr = iole->SetClientSite(&clientsite);
-    if (hr != S_OK) {
-        throw std::runtime_error(std::string("SetClientSite error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    hr = iole->SetHostNames(L"MyHost", L"MyDoc");
-    if (hr != S_OK) {
-        throw std::runtime_error(std::string("SetHostNames error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    hr = OleSetContainedObject(iole, TRUE);
-    if (hr != S_OK) {
-        throw std::runtime_error(std::string("OleSetContainedObject error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    hr = iole->DoVerb(OLEIVERB_SHOW, 0, &clientsite, 0, hhost, &rc);
-    if (hr != S_OK) {
-        throw std::runtime_error(std::string("DoVerb error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    bool connected = false;
-    CComPtr<IConnectionPointContainer> cpc;
-    hr = iole->QueryInterface(IID_IConnectionPointContainer, (void**)&cpc);
-    if (cpc != 0) {
-        CComPtr<IConnectionPoint> cp;
-        hr = cpc->FindConnectionPoint(DIID_DWebBrowserEvents2, &cp);
-        if (cp != 0) {
-            cp->Advise((IDispatch*)this, &cookie);
-            connected = true;
-        }
-    }
-
-    if (!connected) {
-        throw std::runtime_error(std::string("Not connected error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    iole->QueryInterface(IID_IWebBrowser2, (void**)&ibrowser);
-    return true;
-}
-
-void s::wui::window::Impl::addCustomObject(IDispatch* custObj, const std::string& name) {
-    TRACER("addCustomObject");
-
-    HRESULT hr;
-    CComPtr<IHTMLDocument2> doc = GetDoc();
-    if (doc == NULL) {
-        throw std::runtime_error(std::string("Invalid document state:") + GetLastErrorAsString());
-    }
-
-    CComPtr<IHTMLWindow2> win;
-    hr = doc->get_parentWindow(&win);
-    if (win == NULL) {
-        throw std::runtime_error(std::string("unable to get parent window:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    CComPtr<IDispatchEx> winEx;
-    hr = win->QueryInterface(&winEx);
-    if (winEx == NULL) {
-        throw std::runtime_error(std::string("unable to get DispatchEx:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    _bstr_t objName(name.c_str());
-
-    DISPID dispid;
-    hr = winEx->GetDispID(objName, fdexNameEnsure, &dispid);
-    if (FAILED(hr)) {
-        throw std::runtime_error(std::string("unable to get DispatchID:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    DISPID namedArgs[] = { DISPID_PROPERTYPUT };
-    DISPPARAMS params;
-    params.rgvarg = new VARIANT[1];
-    params.rgvarg[0].pdispVal = custObj;
-    params.rgvarg[0].vt = VT_DISPATCH;
-    params.rgdispidNamedArgs = namedArgs;
-    params.cArgs = 1;
-    params.cNamedArgs = 1;
-
-    hr = winEx->InvokeEx(dispid, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &params, NULL, NULL, NULL);
-    if (FAILED(hr)) {
-        throw std::runtime_error(std::string("unable to invoke JSE:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-}
-
-bool s::wui::window::Impl::hookMessage(MSG& msg) {
-    if ((msg.message >= WM_KEYFIRST) && (msg.message <= WM_KEYLAST)) {
-        CComPtr<IOleInPlaceActiveObject> ioipo;
-        ibrowser->QueryInterface(IID_IOleInPlaceActiveObject, (void**)&ioipo);
-        assert(ioipo);
-        if (ioipo != 0) {
-            HRESULT hr = ioipo->TranslateAccelerator(&msg);
-            if (hr == S_OK) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-LRESULT CALLBACK s::wui::window::Impl::WebformWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (msg == WM_NCCREATE) {
-        s::wui::window::Impl* impl = (s::wui::window::Impl*)((LPCREATESTRUCT(lParam))->lpCreateParams);
-        impl->hhost = hwnd;
-        impl->AddRef();
-        impl->setupOle();
-        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)impl);
-        return DefWindowProc(hwnd, msg, wParam, lParam);
-    }
-
-    s::wui::window::Impl* impl = (s::wui::window::Impl*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-    if (impl == 0) {
-        return DefWindowProc(hwnd, msg, wParam, lParam);
-    }
-
-    CREATESTRUCTA* cs = 0;
-
-    switch (msg) {
-    case WM_CREATE:
-        cs = (CREATESTRUCTA*)lParam;
-        if (cs->style & (WS_HSCROLL | WS_VSCROLL)) {
-            SetWindowLongPtr(hwnd, GWL_STYLE, cs->style & ~(WS_HSCROLL | WS_VSCROLL));
-        }
-        if (impl->wb_.onOpen) {
-            impl->wb_.onOpen();
-        }
-        break;
-    case WM_DESTROY:
-        impl->Close();
-        impl->Release();
-        SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
-        break;
-    case WM_CLOSE:
-        if (impl->wb_.onClose) {
-            impl->wb_.onClose();
-        }
-        break;
-    case WM_SETFOCUS:
-        impl->SetFocus();
-        break;
-    case WM_SIZE:
-        impl->ibrowser->put_Width(LOWORD(lParam));
-        impl->ibrowser->put_Height(HIWORD(lParam));
-        break;
-    };
-    return DefWindowProc(hwnd, msg, wParam, lParam);
-}
-
-bool s::wui::window::Impl::open() {
-    TRACER("open");
-    WNDCLASSEX wcex = { 0 };
-    HINSTANCE hInstance = GetModuleHandle(0);
-    if (!::GetClassInfoExW(hInstance, WEBFORM_CLASS, &wcex)) {
-        wcex.cbSize = sizeof(WNDCLASSEXW);
-        wcex.style = CS_HREDRAW | CS_VREDRAW;
-        wcex.lpfnWndProc = (WNDPROC)WebformWndProc;
-        wcex.hInstance = hInstance;
-        wcex.lpszClassName = WEBFORM_CLASS;
-        wcex.cbWndExtra = sizeof(s::wui::window::Impl*);
-        RegisterClassExW(&wcex);
-    }
-    HWND hwndParent = 0;
-    UINT id = 0;
-    UINT flags = WS_CLIPSIBLINGS | WS_VSCROLL;
-    if (hwndParent == 0) {
-        flags |= WS_OVERLAPPEDWINDOW;
-    } else {
-        flags |= WS_CHILDWINDOW;
-    }
-
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-    std::wstring title(convertor.from_bytes(s::app().title));
-
-    HWND hWnd = CreateWindowW(WEBFORM_CLASS, title.c_str(), flags, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, (HMENU)id, hInstance, (LPVOID)this);
-    if (hWnd == NULL) {
-        throw std::runtime_error(std::string("Could not create window:") + GetLastErrorAsString());
-    }
-    ::ShowWindow(hWnd, SW_SHOW);
-    ::UpdateWindow(hWnd);
-    return (hWnd != 0);
-}
-
-void s::wui::window::Impl::go(const std::string& urlx) {
-    auto url = csd.normaliseUrl(urlx);
-
-    // Navigate to the new one and delete the old one
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-    std::wstring ws(convertor.from_bytes(url));
-
-    isnaving = All;
-    VARIANT v;
-    v.vt = VT_I4;
-    v.lVal = 0; //v.lVal=navNoHistory;
-    HRESULT hr = ibrowser->Navigate((BSTR)ws.c_str(), &v, NULL, NULL, NULL);
-
-    // nb. the events know not to bother us for currentlynav.
-    // (Special case: maybe it's already loaded by the time we get here!)
-    if ((isnaving & PreDocumentComplete) == 0) {
-        // todo: remove this
-        WPARAM w = (GetWindowLong(hhost, GWL_ID) & 0xFFFF) | ((WEBFN_LOADED & 0xFFFF) << 16);
-        PostMessage(GetParent(hhost), WM_COMMAND, w, (LPARAM)hhost);
-        NavigateComplete2(ws.c_str());
-    }
-    isnaving &= ~PreNavigateComplete;
-    return;
-}
-
-// todo: remove this
-void s::wui::window::Impl::DocumentComplete(const wchar_t* /*wurl*/) {
-    TRACER("DocumentComplete");
-    isnaving &= ~PreDocumentComplete;
-    if (isnaving & PreNavigateComplete) {
-        return; // we're in the middle of Go(), so the notification will be handled there
-    }
-
-    // todo: remove this
-    WPARAM w = (GetWindowLong(hhost, GWL_ID) & 0xFFFF) | ((WEBFN_LOADED & 0xFFFF) << 16);
-    PostMessage(hhost, WM_COMMAND, w, (LPARAM)hhost);
-    SetFocus();
-}
-
-// todo: remove this
-void s::wui::window::Impl::BeforeNavigate2(const wchar_t* wurl, short *cancel) {
-    TRACER("BeforeNavigate2");
-    *cancel = FALSE;
-    int oldisnav = isnaving;
-    isnaving &= ~PreBeforeNavigate;
-    if (oldisnav & PreBeforeNavigate) {
-        return; // ignore events that came from our own Go()
-    }
-
-    *cancel = TRUE;
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-    curl = convertor.to_bytes(wurl);
-    //std::cout << "CURL:" << curl << std::endl;
-
-    WPARAM w = (GetWindowLong(hhost, GWL_ID) & 0xFFFF) | ((WEBFN_CLICKED & 0xFFFF) << 16);
-    PostMessage(GetParent(hhost), WM_COMMAND, w, (LPARAM)hhost);
-}
-
-void s::wui::window::Impl::NavigateComplete2(const wchar_t* burl) {
-    TRACER("NavigateComplete2");
-    std::wstring wurl = burl;
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-    std::string url(convertor.to_bytes(wurl));
-    addCommonPage(wb_);
-    if (wb_.onLoad) {
-        wb_.onLoad(url);
-    }
-}
-
-IHTMLDocument2 *s::wui::window::Impl::GetDoc() {
-    CComPtr<IDispatch> xdispatch;
-    HRESULT hr = ibrowser->get_Document(&xdispatch);
-    if (xdispatch == 0) {
-        throw std::runtime_error(std::string("unable to get document:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
-    }
-
-    CComPtr<IHTMLDocument2> doc;
-    xdispatch->QueryInterface(IID_IHTMLDocument2, (void**)&doc);
-    return doc;
-}
-
-inline int s::application::Impl::loop() {
-    if (s::app().onInit) {
-        s::app().onInit();
-    }
-
-    //auto hInstance = ::GetModuleHandle(NULL);
-    //HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_APP));
-    HACCEL hAccelTable = 0;
-
-    // Main message loop
-    MSG msg;
-    while (::GetMessage(&msg, NULL, 0, 0) != 0) {
-        if (!::TranslateAccelerator(msg.hwnd, hAccelTable, &msg)) {
-            bool done = false;
-            for (auto w : s::wui::window::Impl::wlist) {
-                done = w->hookMessage(msg);
-                if (done) {
-                    break;
+        // Main message loop
+        MSG msg;
+        while(::GetMessage(&msg, NULL, 0, 0) != 0){
+            if(!::TranslateAccelerator(msg.hwnd, hAccelTable, &msg)){
+                bool done = false;
+                for(auto w : wlist){
+                    done = w->hookMessage(msg);
+                    if(done){
+                        break;
+                    }
+                }
+                if(!done){
+                    ::TranslateMessage(&msg);
+                    ::DispatchMessage(&msg);
                 }
             }
-            if (!done) {
-                ::TranslateMessage(&msg);
-                ::DispatchMessage(&msg);
-            }
         }
+        return 0;
     }
-    return 0;
-}
+
+    inline void exit(const int& exitcode){
+        ::PostQuitMessage(exitcode);
+    }
+
+    inline std::string datadir(const std::string& /*an*/) const{
+        char chPath[MAX_PATH];
+        /// \todo Use SHGetKnownFolderPath for vista and later.
+        HRESULT hr = ::SHGetFolderPathA(NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, chPath);
+        if(!SUCCEEDED(hr)){
+            throw std::runtime_error(std::string("Internal error retrieving data directory:") + GetErrorAsString(hr));
+        }
+        std::string data(chPath);
+        std::replace(data.begin(), data.end(), '\\', '/');
+        return data;
+    }
+};
+
 
 #endif // #ifdef WUI_WIN
 
