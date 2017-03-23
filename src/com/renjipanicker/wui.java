@@ -108,12 +108,9 @@ public class wui {
                     if(data != null){
                         String mim = (String)data[0];
                         byte[] dat = (byte[])data[1];
+                        String enc = (String)data[2];
                         ByteArrayInputStream is = new ByteArrayInputStream(dat);
-                        String enc = "UTF-8";
-                        if(mim.equals("image/png")){
-                            enc = "binary";
-                        }
-                        Log.d(TAG, "webres:" + url + ":" + enc);
+                        //Log.d(TAG, "webres:" + url + ":" + enc);
                         return new WebResourceResponse(mim, enc, is);
                     }
 

@@ -85,11 +85,11 @@ namespace {
     struct ContentSourceData {
         s::wui::ContentSourceType type;
         std::string path;
-        std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> const* lst;
+        std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>> const* lst;
         inline ContentSourceData() : type(s::wui::ContentSourceType::Standard), lst(nullptr) {}
 
         /// \brief set embedded source
-        inline void setEmbeddedSource(std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> const& l) {
+        inline void setEmbeddedSource(std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>> const& l) {
             type = s::wui::ContentSourceType::Embedded;
             lst = &l;
         }
@@ -358,7 +358,7 @@ public:
     inline Impl(s::wui::window& w) : wb(w), window(nullptr), webView(nullptr), wd(nullptr) {
     }
 
-    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
+    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst) {
         csd.setEmbeddedSource(lst);
     }
 
@@ -1072,7 +1072,7 @@ struct s::wui::window::Impl : public IUnknown {
         throw std::runtime_error(std::string("Not implemented: setMenu"));
     }
 
-    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst){
+    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst){
         csd.setEmbeddedSource(lst);
     }
 
@@ -1858,7 +1858,7 @@ public:
         addCommonPage(wb);
     }
 
-    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
+    inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst) {
         csd.setEmbeddedSource(lst);
     }
 
@@ -2110,13 +2110,21 @@ extern "C" {
         auto& data = _s_wimpl->getEmbeddedSource(url);
         jstring jmimetype = env->NewStringUTF(std::get<2>(data).c_str());
         auto len = std::get<1>(data);
+        auto bin = std::get<3>(data);
+        jstring jenc;
+        if(bin){
+            jenc = env->NewStringUTF("binary");
+        }else{
+            jenc = env->NewStringUTF("UTF-8");
+        }
         ALOG("GetPageData:Loading:%s(%u)", url.c_str(), len);
         jbyteArray jstr = env->NewByteArray(len);
         env->SetByteArrayRegion(jstr, 0, len, (const jbyte*)std::get<0>(data));
 
-        jobjectArray ret = (jobjectArray)env->NewObjectArray(2, env->FindClass("java/lang/Object"), 0);
+        jobjectArray ret = (jobjectArray)env->NewObjectArray(3, env->FindClass("java/lang/Object"), 0);
         env->SetObjectArrayElement(ret,0,jmimetype);
         env->SetObjectArrayElement(ret,1,jstr);
+        env->SetObjectArrayElement(ret,2,jenc);
 
         return ret;
     }
@@ -2175,7 +2183,7 @@ s::wui::window::window() {
 s::wui::window::~window() {
 }
 
-void s::wui::window::setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst) {
+void s::wui::window::setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst) {
     return impl_->setContentSourceEmbedded(lst);
 }
 

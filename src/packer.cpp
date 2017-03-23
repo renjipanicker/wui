@@ -6,16 +6,20 @@
 #include <vector>
 #include <map>
 
-std::map<std::string, std::string> mimetypeMap = {
-    {"html", "text/html"}
-   ,{"htm", "text/html"}
-   ,{"txt", "text/plain"}
-   ,{"js", "application/javascript"}
-   ,{"css", "text/css"}
-   ,{"jpg", "image/jpeg"}
-   ,{"jpeg", "image/jpeg"}
-   ,{"gif", "image/gif"}
-   ,{"png", "image/png"}
+struct MimeType {
+    std::string type;
+    bool isBinary;
+};
+std::map<std::string, MimeType> mimetypeMap = {
+    {"html", {"text/html", false}}
+   ,{"htm", {"text/html", false}}
+   ,{"txt", {"text/plain", false}}
+   ,{"js", {"application/javascript", false}}
+   ,{"css", {"text/css", false}}
+   ,{"jpg", {"image/jpeg", true}}
+   ,{"jpeg", {"image/jpeg", true}}
+   ,{"gif", {"image/gif", true}}
+   ,{"png", {"image/png", true}}
 };
 
 void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, std::ostream& fmap, const std::string& ifname, const std::string& vpfx){
@@ -51,9 +55,11 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
     }
 
     std::string mimetype = "text/plain";
+    bool isBinary = true;
     auto mit = mimetypeMap.find(ext);
     if(mit != mimetypeMap.end()){
-        mimetype = mit->second;
+        mimetype = mit->second.type;
+        isBinary = mit->second.isBinary;
     }
 
     ofsrc << "const unsigned char " << vname << "[] = {" << std::endl;
@@ -66,7 +72,29 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
         auto len = ifs.gcount();
         buf[len] = 0;
 
-        s += std::string((const char*)buf, len);
+        if(isBinary){
+            // add binary file chunks as-is
+            s += std::string((const char*)buf, len);
+        }else{
+            // replace consequtive whitespace with single space in text files, to reduce size
+            int lastch = 0;
+            for(size_t i = 0; i < len; ++i){
+                int ch = buf[i];
+                switch(ch){
+                case ' ':
+                case '\t':
+                    if(lastch != ' '){
+                        s += ' ';
+                    }
+                    lastch = ' ';
+                    break;
+                default:
+                    s += ch;
+                    lastch = ch;
+                    break;
+                }
+            }
+        }
 
         size_t slen = 0;
         while((s.length() >= 16) || (len < 16)){
@@ -79,6 +107,10 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
                 if (++x == 16) {
                     break;
                 }
+            }
+            while(x < 16){
+                ofsrc << "      ";
+                ++x;
             }
 
             x = 0;
@@ -109,9 +141,13 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
                     break;
                 }
             }
+            s = s.substr(x);
+            while(x < 16){
+                ofsrc << ' ';
+                ++x;
+            }
             ofsrc << " */";
             ofsrc << std::endl;
-            s = s.substr(x);
             if (s.length() == 0) {
                 break;
             }
@@ -124,7 +160,7 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
     ofsrc << "0" << std::endl;
     ofsrc << "};" << std::endl;
 
-    vmap << "std::tuple<const unsigned char*, size_t, std::string> " << vname << "Tuple {" << vname << ", " << tlen << ", \"" << mimetype << "\"};" << std::endl;
+    vmap << "std::tuple<const unsigned char*, size_t, std::string, bool> " << vname << "Tuple {" << vname << ", " << tlen << ", \"" << mimetype << "\", " << isBinary << "};" << std::endl;
     fmap << "{\"" << vpfx << fname << "\", " << vname << "Tuple}" << std::endl;
 }
 
@@ -190,7 +226,7 @@ int main(int argc, const char* argv[]){
     std::string sep = "  ";
     ofhdr << "#include <map>" << std::endl;
     ofhdr << "#include <string>" << std::endl;
-    ofhdr << "extern std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> " << ofname << ";" << std::endl;
+    ofhdr << "extern std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>> " << ofname << ";" << std::endl;
     ofsrc << "#include \"" << ofname << ".hpp\"" << std::endl;
     ofsrc << "namespace {" << std::endl;
     for(auto& ifname : ifnameList){
@@ -201,7 +237,7 @@ int main(int argc, const char* argv[]){
     ofsrc << "} // namespace" << std::endl;
     ofsrc << std::endl;
     ofsrc << vmap.str();
-    ofsrc << "std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>> " << ofname << " = {" << std::endl;
+    ofsrc << "std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>> " << ofname << " = {" << std::endl;
     ofsrc << fmap.str();
     ofsrc << "};" << std::endl;
     return 0;

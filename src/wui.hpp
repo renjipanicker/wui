@@ -479,7 +479,7 @@ namespace s {
             std::function<void(const std::string&)> onHelp; // (context)
 
         public:
-            void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string>>& lst);
+            void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst);
             void setContentSourceResource(const std::string& path);
             bool open();
             void setDefaultMenu();
