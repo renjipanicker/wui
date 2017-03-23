@@ -151,7 +151,7 @@ namespace {
             }
             auto fit = lst->find(url);
             if(fit == lst->end()){
-                throw std::runtime_error(std::string("unknown url:") + url);
+                throw s::wui::exception(std::string("unknown url:") + url);
             }
             return fit->second;
         }
@@ -656,8 +656,7 @@ public:
 #endif // #ifdef WUI_OSX
 
 #ifdef WUI_WIN
-//#pragma comment( linker, "/subsystem:windows" )
-//#pragma comment( linker, "/subsystem:console" )
+// This code adapted from Tobbe
 
 namespace {
 #if 0
@@ -670,7 +669,6 @@ namespace {
 #else
 #define TRACER1(n)
 #endif
-
     inline std::string GetErrorAsString(HRESULT hr) {
         LPSTR messageBuffer = nullptr;
         size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
@@ -693,16 +691,10 @@ namespace {
 
         return GetErrorAsString(errorMessageID);
     }
-}
 
-namespace {
     // {F1EC293F-DBBD-4A4B-94F4-FA52BA0BA6EE}
     static const GUID CLSID_TInternetProtocol = { 0xf1ec293f, 0xdbbd, 0x4a4b,{ 0x94, 0xf4, 0xfa, 0x52, 0xba, 0xb, 0xa6, 0xee } };
-}
 
-#define NOTIMPLEMENTED _ASSERT(0); return E_NOTIMPL
-
-namespace {
     inline std::string VariantToString(VARIANTARG& var){
         assert(var.vt == VT_BSTR);
         _bstr_t bstrArg = var.bstrVal;
@@ -788,134 +780,117 @@ namespace {
     }
 
     struct WinObject : public IDispatch {
+        inline WinObject(s::js::objectbase& jo) : jo_(jo), ref(0){
+            TRACER("WinObject::WinObject");
+        }
+
+        inline ~WinObject(){
+            TRACER("WinObject::~WinObject");
+            assert(ref == 0);
+        }
+
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv){
+            TRACER("WinObject::QueryInterface");
+            *ppv = NULL;
+
+            if(riid == IID_IUnknown || riid == IID_IDispatch){
+                *ppv = static_cast<IDispatch*>(this);
+            }
+
+            if(*ppv != NULL){
+                AddRef();
+                return S_OK;
+            }
+
+            return E_NOINTERFACE;
+        }
+
+        ULONG STDMETHODCALLTYPE AddRef(){
+            TRACER("WinObject::AddRef");
+            return InterlockedIncrement(&ref);
+        }
+
+        ULONG STDMETHODCALLTYPE Release(){
+            TRACER("WinObject::Release");
+            int tmp = InterlockedDecrement(&ref);
+            assert(tmp >= 0);
+            if(tmp == 0){
+                //delete this;
+            }
+
+            return tmp;
+        }
+
+        HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT *pctinfo){
+            TRACER("WinObject::GetTypeInfoCount");
+            *pctinfo = 0;
+
+            return S_OK;
+        }
+
+        HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT /*iTInfo*/, LCID /*lcid*/, ITypeInfo** /*ppTInfo*/){
+            TRACER("WinObject::GetTypeInfo");
+            return E_FAIL;
+        }
+
+        HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID /*riid*/,
+                                                           LPOLESTR *rgszNames, UINT cNames, LCID /*lcid*/, DISPID *rgDispId){
+            TRACER("WinObject::GetIDsOfNames");
+            HRESULT hr = S_OK;
+
+            for(UINT i = 0; i < cNames; i++){
+                std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
+                std::string fnname(convertor.to_bytes(rgszNames[i]));
+                if(fnname == "invoke"){
+                    rgDispId[i] = DISPID_VALUE + 1;
+                } else{
+                    rgDispId[i] = DISPID_UNKNOWN;
+                    hr = DISP_E_UNKNOWNNAME;
+                }
+            }
+            return hr;
+        }
+
+        HRESULT STDMETHODCALLTYPE Invoke(
+            DISPID dispIdMember,
+            REFIID /*riid*/,
+            LCID /*lcid*/,
+            WORD wFlags,
+            DISPPARAMS *pDispParams,
+            VARIANT *pVarResult,
+            EXCEPINFO* /*pExcepInfo*/,
+            UINT* /*puArgErr*/){
+            TRACER("WinObject::Invoke");
+            if(wFlags & DISPATCH_METHOD){
+                if(dispIdMember == DISPID_VALUE + 1){
+                    auto params = getStringArrayFromCOM(pDispParams, 0);
+                    auto fn = getStringFromCOM(pDispParams, 1);
+                    jo_.invoke(fn, params);
+                    return S_OK;
+                }
+                assert(false);
+            }
+
+            return E_FAIL;
+        }
     private:
         s::js::objectbase& jo_;
         long ref;
-    public:
-
-        WinObject(s::js::objectbase& jo);
-        ~WinObject();
-
-        // IUnknown
-        virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv);
-        virtual ULONG STDMETHODCALLTYPE AddRef();
-        virtual ULONG STDMETHODCALLTYPE Release();
-
-        // IDispatch
-        virtual HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT *pctinfo);
-        virtual HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT iTInfo, LCID lcid,
-            ITypeInfo **ppTInfo);
-        virtual HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID riid,
-            LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId);
-        virtual HRESULT STDMETHODCALLTYPE Invoke(DISPID dispIdMember, REFIID riid,
-            LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult,
-            EXCEPINFO *pExcepInfo, UINT *puArgErr);
     };
 
-    std::vector<s::wui::window::Impl*> wlist;
+    const LPCWSTR WEBFORM_CLASS = L"WebUIWindowClass";
 
 }
 
-WinObject::WinObject(s::js::objectbase& jo) : jo_(jo), ref(0) {
-    TRACER("WinObject::WinObject");
-}
-
-WinObject::~WinObject() {
-    TRACER("WinObject::~WinObject");
-    assert(ref == 0);
-}
-
-HRESULT STDMETHODCALLTYPE WinObject::QueryInterface(REFIID riid, void **ppv) {
-    TRACER("WinObject::QueryInterface");
-    *ppv = NULL;
-
-    if (riid == IID_IUnknown || riid == IID_IDispatch) {
-        *ppv = static_cast<IDispatch*>(this);
-    }
-
-    if (*ppv != NULL) {
-        AddRef();
-        return S_OK;
-    }
-
-    return E_NOINTERFACE;
-}
-
-ULONG STDMETHODCALLTYPE WinObject::AddRef() {
-    TRACER("WinObject::AddRef");
-    return InterlockedIncrement(&ref);
-}
-
-ULONG STDMETHODCALLTYPE WinObject::Release() {
-    TRACER("WinObject::Release");
-    int tmp = InterlockedDecrement(&ref);
-    assert(tmp >= 0);
-    if (tmp == 0) {
-        //delete this;
-    }
-
-    return tmp;
-}
-
-HRESULT STDMETHODCALLTYPE WinObject::GetTypeInfoCount(UINT *pctinfo) {
-    TRACER("WinObject::GetTypeInfoCount");
-    *pctinfo = 0;
-
-    return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE WinObject::GetTypeInfo(UINT /*iTInfo*/, LCID /*lcid*/, ITypeInfo** /*ppTInfo*/) {
-    TRACER("WinObject::GetTypeInfo");
-    return E_FAIL;
-}
-
-HRESULT STDMETHODCALLTYPE WinObject::GetIDsOfNames(REFIID /*riid*/,
-    LPOLESTR *rgszNames, UINT cNames, LCID /*lcid*/, DISPID *rgDispId) {
-    TRACER("WinObject::GetIDsOfNames");
-    HRESULT hr = S_OK;
-
-    for (UINT i = 0; i < cNames; i++) {
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-        std::string fnname(convertor.to_bytes(rgszNames[i]));
-        if (fnname == "invoke") {
-            rgDispId[i] = DISPID_VALUE + 1;
-        } else {
-            rgDispId[i] = DISPID_UNKNOWN;
-            hr = DISP_E_UNKNOWNNAME;
-        }
-    }
-    return hr;
-}
-
-HRESULT STDMETHODCALLTYPE WinObject::Invoke(
-    DISPID dispIdMember,
-    REFIID /*riid*/,
-    LCID /*lcid*/,
-    WORD wFlags,
-    DISPPARAMS *pDispParams,
-    VARIANT *pVarResult,
-    EXCEPINFO* /*pExcepInfo*/,
-    UINT* /*puArgErr*/)
+struct s::wui::window::Impl
+    : public IOleClientSite
+    , public IOleInPlaceSite
+    , public IOleInPlaceFrame
+    , public IDispatch
+    , public IDocHostUIHandler
+    , public IInternetProtocolInfo
+    , public IClassFactory
 {
-    TRACER("WinObject::Invoke");
-    if (wFlags & DISPATCH_METHOD) {
-        if (dispIdMember == DISPID_VALUE + 1) {
-            auto params = getStringArrayFromCOM(pDispParams, 0);
-            auto fn = getStringFromCOM(pDispParams, 1);
-            jo_.invoke(fn, params);
-            return S_OK;
-        }
-        assert(false);
-    }
-
-    return E_FAIL;
-}
-
-const LPCWSTR WEBFORM_CLASS = L"WebUIWindowClass";
-#define WEBFN_CLICKED      2
-#define WEBFN_LOADED       3
-
-struct s::wui::window::Impl : public IUnknown {
     ContentSourceData csd;
 
     long ref;
@@ -952,7 +927,7 @@ struct s::wui::window::Impl : public IUnknown {
             CComPtr<IOleObject> iole;
             ibrowser->QueryInterface(IID_IOleObject, (void**)&iole);
             if(iole != 0){
-                iole->DoVerb(OLEIVERB_UIACTIVATE, NULL, &clientsite, 0, hhost, 0);
+                iole->DoVerb(OLEIVERB_UIACTIVATE, NULL, this, 0, hhost, 0);
             }
         }
     }
@@ -961,7 +936,7 @@ struct s::wui::window::Impl : public IUnknown {
         CComPtr<IDispatch> xdispatch;
         HRESULT hr = ibrowser->get_Document(&xdispatch);
         if(xdispatch == 0){
-            throw std::runtime_error(std::string("unable to get document:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("unable to get document:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
         CComPtr<IHTMLDocument2> doc;
@@ -975,19 +950,19 @@ struct s::wui::window::Impl : public IUnknown {
         HRESULT hr;
         CComPtr<IHTMLDocument2> doc = GetDoc();
         if(doc == NULL){
-            throw std::runtime_error(std::string("Invalid document state:") + GetLastErrorAsString());
+            throw s::wui::exception(std::string("Invalid document state:") + GetLastErrorAsString());
         }
 
         CComPtr<IHTMLWindow2> win;
         hr = doc->get_parentWindow(&win);
         if(win == NULL){
-            throw std::runtime_error(std::string("unable to get parent window:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("unable to get parent window:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
         CComPtr<IDispatchEx> winEx;
         hr = win->QueryInterface(&winEx);
         if(winEx == NULL){
-            throw std::runtime_error(std::string("unable to get DispatchEx:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("unable to get DispatchEx:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
         _bstr_t objName(name.c_str());
@@ -995,7 +970,7 @@ struct s::wui::window::Impl : public IUnknown {
         DISPID dispid;
         hr = winEx->GetDispID(objName, fdexNameEnsure, &dispid);
         if(FAILED(hr)){
-            throw std::runtime_error(std::string("unable to get DispatchID:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("unable to get DispatchID:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
         DISPID namedArgs[] = {DISPID_PROPERTYPUT};
@@ -1009,7 +984,7 @@ struct s::wui::window::Impl : public IUnknown {
 
         hr = winEx->InvokeEx(dispid, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &params, NULL, NULL, NULL);
         if(FAILED(hr)){
-            throw std::runtime_error(std::string("unable to invoke JSE:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("unable to invoke JSE:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
     }
 
@@ -1035,18 +1010,16 @@ struct s::wui::window::Impl : public IUnknown {
             flags |= WS_CHILDWINDOW;
         }
 
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
         std::wstring title(convertor.from_bytes(s::app().title));
 
         HWND hWnd = CreateWindowW(WEBFORM_CLASS, title.c_str(), flags, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, (HMENU)id, hInstance, (LPVOID)this);
         if(hWnd == NULL){
-            throw std::runtime_error(std::string("Could not create window:") + GetLastErrorAsString());
+            throw s::wui::exception(std::string("Could not create window:") + GetLastErrorAsString());
         }
         ::ShowWindow(hWnd, SW_SHOW);
         ::UpdateWindow(hWnd);
         return (hWnd != 0);
     }
-
 
     // Register our protocol so that urlmon will call us for every
     // url that starts with HW_PROTO_PREFIX
@@ -1054,7 +1027,7 @@ struct s::wui::window::Impl : public IUnknown {
         CComPtr<IInternetSession> internetSession;
         HRESULT hr = ::CoInternetGetSession(0, &internetSession, 0);
         assert(!FAILED(hr));
-        hr = internetSession->RegisterNameSpace(&ipfac, CLSID_TInternetProtocol, empfxw.c_str(), 0, nullptr, 0);
+        hr = internetSession->RegisterNameSpace(this, CLSID_TInternetProtocol, empfxw.c_str(), 0, nullptr, 0);
         assert(!FAILED(hr));
     }
 
@@ -1062,14 +1035,14 @@ struct s::wui::window::Impl : public IUnknown {
         CComPtr<IInternetSession> internetSession;
         HRESULT hr = ::CoInternetGetSession(0, &internetSession, 0);
         assert(!FAILED(hr));
-        internetSession->UnregisterNameSpace(&ipfac, empfxw.c_str());
+        internetSession->UnregisterNameSpace(this, empfxw.c_str());
     }
 
     inline void setDefaultMenu(){
     }
 
     inline void setMenu(const menu& /*m*/){
-        throw std::runtime_error(std::string("Not implemented: setMenu"));
+        throw s::wui::exception(std::string("Not implemented: setMenu"));
     }
 
     inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst){
@@ -1083,22 +1056,21 @@ struct s::wui::window::Impl : public IUnknown {
     inline void eval(const std::string& str){
         CComPtr<IHTMLDocument2> doc = GetDoc();
         if(doc == NULL){
-            throw std::runtime_error(std::string("Unable to get document object:") + GetLastErrorAsString());
+            throw s::wui::exception(std::string("Unable to get document object:") + GetLastErrorAsString());
         }
 
         CComPtr<IHTMLWindow2> win;
         doc->get_parentWindow(&win);
         if(win == NULL){
-            throw std::runtime_error(std::string("Unable to get parent window:") + GetLastErrorAsString());
+            throw s::wui::exception(std::string("Unable to get parent window:") + GetLastErrorAsString());
         }
 
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
         std::wstring rv(convertor.from_bytes(str));
         VARIANT v;
         VariantInit(&v);
         HRESULT hr = win->execScript((BSTR)rv.c_str(), NULL, &v);
         if(hr != S_OK){
-            throw std::runtime_error(std::string("JavaScript execution error:") + GetErrorAsString(hr));
+            throw s::wui::exception(std::string("JavaScript execution error:") + GetErrorAsString(hr));
         }
 
         VariantClear(&v);
@@ -1117,7 +1089,6 @@ struct s::wui::window::Impl : public IUnknown {
         auto url = csd.normaliseUrl(urlx);
 
         // Navigate to the new one and delete the old one
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
         std::wstring ws(convertor.from_bytes(url));
 
         VARIANT v;
@@ -1137,27 +1108,27 @@ struct s::wui::window::Impl : public IUnknown {
         CComPtr<IOleObject> iole;
         hr = CoCreateInstance(CLSID_WebBrowser, NULL, CLSCTX_INPROC_SERVER, IID_IOleObject, (void**)&iole);
         if(hr != S_OK){
-            throw std::runtime_error(std::string("CoCreateInstance error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("CoCreateInstance error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
-        hr = iole->SetClientSite(&clientsite);
+        hr = iole->SetClientSite(this);
         if(hr != S_OK){
-            throw std::runtime_error(std::string("SetClientSite error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("SetClientSite error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
         hr = iole->SetHostNames(L"MyHost", L"MyDoc");
         if(hr != S_OK){
-            throw std::runtime_error(std::string("SetHostNames error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("SetHostNames error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
         hr = OleSetContainedObject(iole, TRUE);
         if(hr != S_OK){
-            throw std::runtime_error(std::string("OleSetContainedObject error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("OleSetContainedObject error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
-        hr = iole->DoVerb(OLEIVERB_SHOW, 0, &clientsite, 0, hhost, &rc);
+        hr = iole->DoVerb(OLEIVERB_SHOW, 0, this, 0, hhost, &rc);
         if(hr != S_OK){
-            throw std::runtime_error(std::string("DoVerb error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("DoVerb error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
         bool connected = false;
@@ -1173,7 +1144,7 @@ struct s::wui::window::Impl : public IUnknown {
         }
 
         if(!connected){
-            throw std::runtime_error(std::string("Not connected error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
+            throw s::wui::exception(std::string("Not connected error:") + GetLastErrorAsString() + "(" + GetErrorAsString(hr) + ")");
         }
 
         iole->QueryInterface(IID_IWebBrowser2, (void**)&ibrowser);
@@ -1244,9 +1215,8 @@ struct s::wui::window::Impl : public IUnknown {
     }
 
     inline void NavigateComplete2(const wchar_t* burl){
-        TRACER("NavigateComplete2");
+        TRACER1("NavigateComplete2");
         std::wstring wurl = burl;
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
         std::string url(convertor.to_bytes(wurl));
         addCommonPage(wb_);
         if(wb_.onLoad){
@@ -1254,20 +1224,117 @@ struct s::wui::window::Impl : public IUnknown {
         }
     }
 
+    inline void setIcon(const std::string& favi){
+        std::cout << "set icon:favi:" << favi << std::endl;
+        if(csd.type != s::wui::ContentSourceType::Embedded){
+            std::cout << "set-icon skipped" << std::endl;
+            return;
+        }
+        auto& pdata = csd.getEmbeddedSource(favi);
+        auto data = std::get<0>(pdata);
+        auto dataLen = std::get<1>(pdata);
+        auto bdata = (PBYTE)data;
+        auto offset = LookupIconIdFromDirectoryEx(bdata, TRUE, 0, 0, LR_DEFAULTCOLOR);
+        //std::cout << "offset:" << offset << std::endl;
+        if(offset != 0){
+            HICON hIcon = ::CreateIconFromResourceEx(bdata + offset, 0, TRUE, 0x30000, 0, 0, LR_DEFAULTCOLOR);
+            ::SetClassLong(hhost, GCL_HICON, (long)hIcon);
+        }
+    }
+
+    inline void getFaviconURLFromContent(){
+        CComPtr<IHTMLDocument2> doc = GetDoc();
+        if(doc == NULL){
+            throw s::wui::exception(std::string("Invalid document state:") + GetLastErrorAsString());
+        }
+
+        std::string favurl;
+        CComPtr<IHTMLElementCollection> elems;
+        if(!SUCCEEDED(doc->get_all(&elems))){
+            throw s::wui::exception(std::string("unable to get elements:") + GetLastErrorAsString());
+        }
+
+        long length;
+        if(!SUCCEEDED(elems->get_length(&length))){
+            throw s::wui::exception(std::string("unable to get element-list length:") + GetLastErrorAsString());
+        }
+
+        // iterate over elements in the document
+        for(int i = 0; i < length; i++){
+            CComVariant index = i;
+            CComQIPtr<IDispatch> pElemDisp;
+            elems->item(index, index, &pElemDisp);
+            if(!pElemDisp){
+                continue;
+            }
+            CComQIPtr<IHTMLElement> pElem = pElemDisp;
+            if(!pElem){
+                continue;
+            }
+
+            CComBSTR bstrTagName;
+            if(FAILED(pElem->get_tagName(&bstrTagName))){
+                continue;
+            }
+
+            std::string tagName(convertor.to_bytes(bstrTagName));
+            //tagName.MakeLower();
+
+            // to speed up, only parse elements before the body element
+            if(tagName == "BODY"){
+                break;
+            }
+
+            // check for title
+            if(tagName == "TITLE"){
+                CComBSTR wtitle;
+                if(SUCCEEDED(pElem->get_innerText(&wtitle))){
+                    std::string title(convertor.to_bytes(wtitle));
+                    //std::cout << "got doc:title:" << title << std::endl;
+                    if(title.length() > 0){
+                        ::SetWindowTextA(hhost, title.c_str());
+                    }
+                }
+            }
+
+            // if link, check for favicon
+            if(tagName == "LINK"){
+                CComVariant vRel;
+                if(SUCCEEDED(pElem->getAttribute(_T("rel"), 2, &vRel))){
+                    std::string rel(convertor.to_bytes(vRel.bstrVal));
+                    //rel.MakeLower();
+                    if((rel == "shortcut icon") || (rel == "icon")){
+                        CComVariant vHref;
+                        if(SUCCEEDED(pElem->getAttribute(_T("href"), 2, &vHref))){
+                            favurl = convertor.to_bytes(vHref.bstrVal);
+                            setIcon(favurl);
+                        }
+                    }
+                } else{
+                }
+            }
+        }
+    }
+
     inline void DocumentComplete(const wchar_t *url){
-        TRACER("DocumentComplete");
+        TRACER1("DocumentComplete");
+        CComPtr<IHTMLDocument2> doc = GetDoc();
+        if(doc == NULL){
+            throw s::wui::exception(std::string("Invalid document state:") + GetLastErrorAsString());
+        }
+        getFaviconURLFromContent();
         SetFocus();
     }
 
     // IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) {
-        if (riid == IID_IUnknown) { *ppv = this; AddRef(); return S_OK; }
-        if (riid == IID_IOleClientSite) { *ppv = &clientsite; AddRef(); return S_OK; }
-        if (riid == IID_IOleWindow || riid == IID_IOleInPlaceSite) { *ppv = &site; AddRef(); return S_OK; }
-        if (riid == IID_IOleInPlaceUIWindow || riid == IID_IOleInPlaceFrame) { *ppv = &frame; AddRef(); return S_OK; }
-        if (riid == IID_IDispatch) { *ppv = &dispatch; AddRef(); return S_OK; }
-        if (riid == IID_IDocHostUIHandler) { *ppv = &uihandler; AddRef(); return S_OK; }
-        if (riid == IID_IInternetSecurityManager) { assert(false); *ppv = &isecm; AddRef(); return S_OK; }
+        if (riid == IID_IUnknown) { *ppv = (IOleClientSite*)this; AddRef(); return S_OK; }
+        if (riid == IID_IOleClientSite) { *ppv = (IOleClientSite*)this; AddRef(); return S_OK; }
+        if (riid == IID_IOleWindow || riid == IID_IOleInPlaceSite) { *ppv = (IOleInPlaceSite*)this; AddRef(); return S_OK; }
+        if (riid == IID_IOleInPlaceUIWindow || riid == IID_IOleInPlaceFrame) { *ppv = (IOleInPlaceFrame*)this; AddRef(); return S_OK; }
+        if (riid == IID_IDispatch) { *ppv = (IDispatch*)this; AddRef(); return S_OK; }
+        if (riid == IID_IDocHostUIHandler) { *ppv = (IDocHostUIHandler*)this; AddRef(); return S_OK; }
+        if (riid == IID_IInternetProtocolInfo) { *ppv = (IInternetProtocolInfo*)this; AddRef(); return S_OK; }
         return E_NOINTERFACE;
     }
     ULONG STDMETHODCALLTYPE AddRef() {
@@ -1285,185 +1352,137 @@ struct s::wui::window::Impl : public IUnknown {
         return tmp;
     }
 
-    struct TOleClientSite : public IOleClientSite {
-    public: Impl *webf;
-            // IUnknown
-            HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-            ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-            ULONG STDMETHODCALLTYPE Release() { TRACER("TOleClientSite::Release"); return webf->Release(); }
-            // IOleClientSite
-            HRESULT STDMETHODCALLTYPE SaveObject() { return E_NOTIMPL; }
-            HRESULT STDMETHODCALLTYPE GetMoniker(DWORD /*dwAssign*/, DWORD /*dwWhichMoniker*/, IMoniker** /*ppmk*/) { return E_NOTIMPL; }
-            HRESULT STDMETHODCALLTYPE GetContainer(IOleContainer **ppContainer) { *ppContainer = 0; return E_NOINTERFACE; }
-            HRESULT STDMETHODCALLTYPE ShowObject() { return S_OK; }
-            HRESULT STDMETHODCALLTYPE OnShowWindow(BOOL /*fShow*/) { return E_NOTIMPL; }
-            HRESULT STDMETHODCALLTYPE RequestNewObjectLayout() { return E_NOTIMPL; }
-    } clientsite;
+    // IOleClientSite
+    HRESULT STDMETHODCALLTYPE SaveObject(){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetMoniker(DWORD /*dwAssign*/, DWORD /*dwWhichMoniker*/, IMoniker** /*ppmk*/){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetContainer(IOleContainer **ppContainer){ *ppContainer = 0; return E_NOINTERFACE; }
+    HRESULT STDMETHODCALLTYPE ShowObject(){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnShowWindow(BOOL /*fShow*/){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE RequestNewObjectLayout(){ return E_NOTIMPL; }
 
-    struct TOleInPlaceSite : public IOleInPlaceSite {
-        s::wui::window::Impl *webf;
-        // IUnknown
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-        ULONG STDMETHODCALLTYPE Release() { return webf->Release(); }
-        // IOleWindow
-        HRESULT STDMETHODCALLTYPE GetWindow(HWND *phwnd) { *phwnd = webf->hhost; return S_OK; }
-        HRESULT STDMETHODCALLTYPE ContextSensitiveHelp(BOOL /*fEnterMode*/) { return E_NOTIMPL; }
-        // IOleInPlaceSite
-        HRESULT STDMETHODCALLTYPE CanInPlaceActivate() { return S_OK; }
-        HRESULT STDMETHODCALLTYPE OnInPlaceActivate() { return S_OK; }
-        HRESULT STDMETHODCALLTYPE OnUIActivate() { return S_OK; }
-        HRESULT STDMETHODCALLTYPE GetWindowContext(IOleInPlaceFrame **ppFrame, IOleInPlaceUIWindow **ppDoc, LPRECT lprcPosRect, LPRECT lprcClipRect, LPOLEINPLACEFRAMEINFO info) {
-            *ppFrame = &webf->frame; webf->frame.AddRef();
-            *ppDoc = 0;
-            info->fMDIApp = FALSE; info->hwndFrame = webf->hhost; info->haccel = 0; info->cAccelEntries = 0;
-            GetClientRect(webf->hhost, lprcPosRect);
-            GetClientRect(webf->hhost, lprcClipRect);
-            return(S_OK);
-        }
-        HRESULT STDMETHODCALLTYPE Scroll(SIZE /*scrollExtant*/) { return E_NOTIMPL; }
-        HRESULT STDMETHODCALLTYPE OnUIDeactivate(BOOL /*fUndoable*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE OnInPlaceDeactivate() { return S_OK; }
-        HRESULT STDMETHODCALLTYPE DiscardUndoState() { return E_NOTIMPL; }
-        HRESULT STDMETHODCALLTYPE DeactivateAndUndo() { return E_NOTIMPL; }
-        HRESULT STDMETHODCALLTYPE OnPosRectChange(LPCRECT lprcPosRect) {
-            IOleInPlaceObject *iole = 0;
-            webf->ibrowser->QueryInterface(IID_IOleInPlaceObject, (void**)&iole);
-            if (iole != 0) { iole->SetObjectRects(lprcPosRect, lprcPosRect); iole->Release(); }
-            return S_OK;
-        }
-    } site;
+    // IOleWindow
+    HRESULT STDMETHODCALLTYPE GetWindow(HWND *phwnd){ *phwnd = hhost; return S_OK; }
+    HRESULT STDMETHODCALLTYPE ContextSensitiveHelp(BOOL /*fEnterMode*/){ return E_NOTIMPL; }
+    // IOleInPlaceSite
+    HRESULT STDMETHODCALLTYPE CanInPlaceActivate(){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnInPlaceActivate(){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnUIActivate(){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetWindowContext(IOleInPlaceFrame **ppFrame, IOleInPlaceUIWindow **ppDoc, LPRECT lprcPosRect, LPRECT lprcClipRect, LPOLEINPLACEFRAMEINFO info){
+        *ppFrame = this;
+        AddRef();
+        *ppDoc = 0;
+        info->fMDIApp = FALSE; info->hwndFrame = hhost; info->haccel = 0; info->cAccelEntries = 0;
+        GetClientRect(hhost, lprcPosRect);
+        GetClientRect(hhost, lprcClipRect);
+        return(S_OK);
+    }
+    HRESULT STDMETHODCALLTYPE Scroll(SIZE /*scrollExtant*/){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE OnUIDeactivate(BOOL /*fUndoable*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnInPlaceDeactivate(){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE DiscardUndoState(){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE DeactivateAndUndo(){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE OnPosRectChange(LPCRECT lprcPosRect){
+        IOleInPlaceObject *iole = 0;
+        ibrowser->QueryInterface(IID_IOleInPlaceObject, (void**)&iole);
+        if(iole != 0){ iole->SetObjectRects(lprcPosRect, lprcPosRect); iole->Release(); }
+        return S_OK;
+    }
 
-    struct TOleInPlaceFrame : public IOleInPlaceFrame {
-        s::wui::window::Impl *webf;
-        // IUnknown
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-        ULONG STDMETHODCALLTYPE Release() { TRACER("TOleInPlaceFrame::Release"); return webf->Release(); }
-        // IOleWindow
-        HRESULT STDMETHODCALLTYPE GetWindow(HWND *phwnd) { *phwnd = webf->hhost; return S_OK; }
-        HRESULT STDMETHODCALLTYPE ContextSensitiveHelp(BOOL /*fEnterMode*/) { return E_NOTIMPL; }
-        // IOleInPlaceUIWindow
-        HRESULT STDMETHODCALLTYPE GetBorder(LPRECT /*lprectBorder*/) { return E_NOTIMPL; }
-        HRESULT STDMETHODCALLTYPE RequestBorderSpace(LPCBORDERWIDTHS /*pborderwidths*/) { return E_NOTIMPL; }
-        HRESULT STDMETHODCALLTYPE SetBorderSpace(LPCBORDERWIDTHS /*pborderwidths*/) { return E_NOTIMPL; }
-        HRESULT STDMETHODCALLTYPE SetActiveObject(IOleInPlaceActiveObject* /*pActiveObject*/, LPCOLESTR /*pszObjName*/) { return S_OK; }
-        // IOleInPlaceFrame
-        HRESULT STDMETHODCALLTYPE InsertMenus(HMENU /*hmenuShared*/, LPOLEMENUGROUPWIDTHS /*lpMenuWidths*/) { return E_NOTIMPL; }
-        HRESULT STDMETHODCALLTYPE SetMenu(HMENU /*hmenuShared*/, HOLEMENU /*holemenu*/, HWND /*hwndActiveObject*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE RemoveMenus(HMENU /*hmenuShared*/) { return E_NOTIMPL; }
-        HRESULT STDMETHODCALLTYPE SetStatusText(LPCOLESTR /*pszStatusText*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE EnableModeless(BOOL /*fEnable*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE TranslateAccelerator(LPMSG /*lpmsg*/, WORD /*wID*/) { return E_NOTIMPL; }
-    } frame;
+    // IOleInPlaceUIWindow
+    HRESULT STDMETHODCALLTYPE GetBorder(LPRECT /*lprectBorder*/){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE RequestBorderSpace(LPCBORDERWIDTHS /*pborderwidths*/){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetBorderSpace(LPCBORDERWIDTHS /*pborderwidths*/){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetActiveObject(IOleInPlaceActiveObject* /*pActiveObject*/, LPCOLESTR /*pszObjName*/){ return S_OK; }
+    // IOleInPlaceFrame
+    HRESULT STDMETHODCALLTYPE InsertMenus(HMENU /*hmenuShared*/, LPOLEMENUGROUPWIDTHS /*lpMenuWidths*/){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetMenu(HMENU /*hmenuShared*/, HOLEMENU /*holemenu*/, HWND /*hwndActiveObject*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE RemoveMenus(HMENU /*hmenuShared*/){ return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetStatusText(LPCOLESTR /*pszStatusText*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE IOleInPlaceFrame::EnableModeless(BOOL /*fEnable*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE TranslateAccelerator(LPMSG /*lpmsg*/, WORD /*wID*/){ return E_NOTIMPL; }
 
-    struct TDispatch : public IDispatch {
-        s::wui::window::Impl *webf;
-        // IUnknown
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-        ULONG STDMETHODCALLTYPE Release() { TRACER("TDispatch::Release"); return webf->Release(); }
-        // IDispatch
-        HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT *pctinfo) { *pctinfo = 0; return S_OK; }
-        HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT /*iTInfo*/, LCID /*lcid*/, ITypeInfo** /*ppTInfo*/) { return E_FAIL; }
-        HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID /*riid*/, LPOLESTR* /*rgszNames*/, UINT /*cNames*/, LCID /*lcid*/, DISPID* /*rgDispId*/) { return E_FAIL; }
+    // IDispatch
+    HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT *pctinfo){ *pctinfo = 0; return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT /*iTInfo*/, LCID /*lcid*/, ITypeInfo** /*ppTInfo*/){ return E_FAIL; }
+    HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID /*riid*/, LPOLESTR* /*rgszNames*/, UINT /*cNames*/, LCID /*lcid*/, DISPID* /*rgDispId*/){ return E_FAIL; }
 
-
-        HRESULT STDMETHODCALLTYPE Invoke(DISPID dispIdMember, REFIID /*riid*/, LCID /*lcid*/, WORD /*wFlags*/, DISPPARAMS* Params, VARIANT* pVarResult, EXCEPINFO* /*pExcepInfo*/, UINT* /*puArgErr*/) {
-            switch (dispIdMember) { // DWebBrowserEvents2
-            case DISPID_NAVIGATECOMPLETE2:
-                webf->NavigateComplete2(Params->rgvarg[0].pvarVal->bstrVal);
-                break;
-            case DISPID_DOCUMENTCOMPLETE:
-                webf->DocumentComplete(Params->rgvarg[0].pvarVal->bstrVal);
-                break;
-            case DISPID_AMBIENT_DLCONTROL:
-            {
-                pVarResult->vt = VT_I4;
-                pVarResult->lVal = DLCTL_DLIMAGES | DLCTL_VIDEOS | DLCTL_BGSOUNDS | DLCTL_SILENT;
-            }
-
-            default:
-                return DISP_E_MEMBERNOTFOUND;
-            }
-            return S_OK;
-        }
-    } dispatch;
-
-    struct TDocHostUIHandler : public IDocHostUIHandler {
-        s::wui::window::Impl *webf;
-        // IUnknown
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-        ULONG STDMETHODCALLTYPE Release() { return webf->Release(); }
-        // IDocHostUIHandler
-        HRESULT STDMETHODCALLTYPE ShowContextMenu(DWORD /*dwID*/, POINT* /*ppt*/, IUnknown* /*pcmdtReserved*/, IDispatch* /*pdispReserved*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE GetHostInfo(DOCHOSTUIINFO *pInfo) { pInfo->dwFlags = (webf->hasscrollbars ? 0 : DOCHOSTUIFLAG_SCROLL_NO) | DOCHOSTUIFLAG_NO3DOUTERBORDER; return S_OK; }
-        HRESULT STDMETHODCALLTYPE ShowUI(DWORD /*dwID*/, IOleInPlaceActiveObject* /*pActiveObject*/, IOleCommandTarget* /*pCommandTarget*/, IOleInPlaceFrame* /*pFrame*/, IOleInPlaceUIWindow* /*pDoc*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE HideUI() { return S_OK; }
-        HRESULT STDMETHODCALLTYPE UpdateUI() { return S_OK; }
-        HRESULT STDMETHODCALLTYPE EnableModeless(BOOL /*fEnable*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE OnDocWindowActivate(BOOL /*fActivate*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE OnFrameWindowActivate(BOOL /*fActivate*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE ResizeBorder(LPCRECT /*prcBorder*/, IOleInPlaceUIWindow* /*pUIWindow*/, BOOL /*fRameWindow*/) { return S_OK; }
-        HRESULT STDMETHODCALLTYPE TranslateAccelerator(LPMSG /*lpMsg*/, const GUID* /*pguidCmdGroup*/, DWORD /*nCmdID*/) { return S_FALSE; }
-        HRESULT STDMETHODCALLTYPE GetOptionKeyPath(LPOLESTR* /*pchKey*/, DWORD /*dw*/) { return S_FALSE; }
-        HRESULT STDMETHODCALLTYPE GetDropTarget(IDropTarget* /*pDropTarget*/, IDropTarget** /*ppDropTarget*/) { return S_FALSE; }
-        HRESULT STDMETHODCALLTYPE GetExternal(IDispatch** ppDispatch) { *ppDispatch = 0; return S_FALSE; }
-        HRESULT STDMETHODCALLTYPE TranslateUrl(DWORD /*dwTranslate*/, OLECHAR* /*pchURLIn*/, OLECHAR** ppchURLOut) { *ppchURLOut = 0; return S_FALSE; }
-        HRESULT STDMETHODCALLTYPE FilterDataObject(IDataObject* /*pDO*/, IDataObject** ppDORet) { *ppDORet = 0; return S_FALSE; }
-    } uihandler;
-
-    struct TDocHostShowUI : public IDocHostShowUI {
-        s::wui::window::Impl *webf;
-        // IUnknown
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-        ULONG STDMETHODCALLTYPE Release() { return webf->Release(); }
-        // IDocHostShowUI
-        HRESULT STDMETHODCALLTYPE ShowMessage(HWND /*hwnd*/, LPOLESTR /*lpstrText*/, LPOLESTR /*lpstrCaption*/, DWORD /*dwType*/, LPOLESTR /*lpstrHelpFile*/, DWORD /*dwHelpContext*/, LRESULT *plResult) { *plResult = IDCANCEL; return S_OK; }
-        HRESULT STDMETHODCALLTYPE ShowHelp(HWND /*hwnd*/, LPOLESTR /*pszHelpFile*/, UINT /*uCommand*/, DWORD /*dwData*/, POINT /*ptMouse*/, IDispatch* /*pDispatchObjectHit*/) { return S_OK; }
-    } showui;
-
-    struct TInternetProtocolInfo : public IInternetProtocolInfo
-    {
-        s::wui::window::Impl *webf;
-
-        // IUnknown
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-        ULONG STDMETHODCALLTYPE Release() { TRACER("TInternetProtocolInfo::Release"); return webf->Release(); }
-
-        // IInternetProtocolInfo
-        STDMETHODIMP ParseUrl(LPCWSTR /*pwzUrl*/, PARSEACTION /*parseAction*/, DWORD /*dwParseFlags*/,
-            LPWSTR /*pwzResult*/, DWORD /*cchResult*/, DWORD* /*pcchResult*/, DWORD /*dwReserved*/)
+    HRESULT STDMETHODCALLTYPE Invoke(DISPID dispIdMember, REFIID /*riid*/, LCID /*lcid*/, WORD /*wFlags*/, DISPPARAMS* Params, VARIANT* pVarResult, EXCEPINFO* /*pExcepInfo*/, UINT* /*puArgErr*/){
+        switch(dispIdMember){ // DWebBrowserEvents2
+        case DISPID_NAVIGATECOMPLETE2:
+            NavigateComplete2(Params->rgvarg[0].pvarVal->bstrVal);
+            break;
+        case DISPID_DOCUMENTCOMPLETE:
+            DocumentComplete(Params->rgvarg[0].pvarVal->bstrVal);
+            break;
+        case DISPID_AMBIENT_DLCONTROL:
         {
-            return INET_E_DEFAULT_ACTION;
+            pVarResult->vt = VT_I4;
+            pVarResult->lVal = DLCTL_DLIMAGES | DLCTL_VIDEOS | DLCTL_BGSOUNDS | DLCTL_SILENT;
         }
 
-        STDMETHODIMP CombineUrl(LPCWSTR /*pwzBaseUrl*/, LPCWSTR /*pwzRelativeUrl*/,
-            DWORD /*dwCombineFlags*/, LPWSTR /*pwzResult*/, DWORD /*cchResult*/, DWORD* /*pcchResult*/,
-            DWORD /*dwReserved*/)
-        {
-            return INET_E_DEFAULT_ACTION;
+        default:
+            return DISP_E_MEMBERNOTFOUND;
         }
+        return S_OK;
+    }
 
-        STDMETHODIMP CompareUrl(LPCWSTR /*pwzUrl1*/, LPCWSTR /*pwzUrl2*/, DWORD /*dwCompareFlags*/)
-        {
-            return INET_E_DEFAULT_ACTION;
+    // IDocHostUIHandler
+    HRESULT STDMETHODCALLTYPE ShowContextMenu(DWORD /*dwID*/, POINT* /*ppt*/, IUnknown* /*pcmdtReserved*/, IDispatch* /*pdispReserved*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetHostInfo(DOCHOSTUIINFO *pInfo){ pInfo->dwFlags = (hasscrollbars ? 0 : DOCHOSTUIFLAG_SCROLL_NO) | DOCHOSTUIFLAG_NO3DOUTERBORDER; return S_OK; }
+    HRESULT STDMETHODCALLTYPE ShowUI(DWORD /*dwID*/, IOleInPlaceActiveObject* /*pActiveObject*/, IOleCommandTarget* /*pCommandTarget*/, IOleInPlaceFrame* /*pFrame*/, IOleInPlaceUIWindow* /*pDoc*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE HideUI(){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE UpdateUI(){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE IDocHostUIHandler::EnableModeless(BOOL /*fEnable*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDocWindowActivate(BOOL /*fActivate*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnFrameWindowActivate(BOOL /*fActivate*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE ResizeBorder(LPCRECT /*prcBorder*/, IOleInPlaceUIWindow* /*pUIWindow*/, BOOL /*fRameWindow*/){ return S_OK; }
+    HRESULT STDMETHODCALLTYPE TranslateAccelerator(LPMSG /*lpMsg*/, const GUID* /*pguidCmdGroup*/, DWORD /*nCmdID*/){ return S_FALSE; }
+    HRESULT STDMETHODCALLTYPE GetOptionKeyPath(LPOLESTR* /*pchKey*/, DWORD /*dw*/){ return S_FALSE; }
+    HRESULT STDMETHODCALLTYPE GetDropTarget(IDropTarget* /*pDropTarget*/, IDropTarget** /*ppDropTarget*/){ return S_FALSE; }
+    HRESULT STDMETHODCALLTYPE GetExternal(IDispatch** ppDispatch){ *ppDispatch = 0; return S_FALSE; }
+    HRESULT STDMETHODCALLTYPE TranslateUrl(DWORD /*dwTranslate*/, OLECHAR* /*pchURLIn*/, OLECHAR** ppchURLOut){ *ppchURLOut = 0; return S_FALSE; }
+    HRESULT STDMETHODCALLTYPE FilterDataObject(IDataObject* /*pDO*/, IDataObject** ppDORet){ *ppDORet = 0; return S_FALSE; }
+
+    // IInternetProtocolInfo
+    STDMETHODIMP ParseUrl(LPCWSTR /*pwzUrl*/, PARSEACTION /*parseAction*/, DWORD /*dwParseFlags*/,
+                          LPWSTR /*pwzResult*/, DWORD /*cchResult*/, DWORD* /*pcchResult*/, DWORD /*dwReserved*/){
+        return INET_E_DEFAULT_ACTION;
+    }
+
+    STDMETHODIMP CombineUrl(LPCWSTR /*pwzBaseUrl*/, LPCWSTR /*pwzRelativeUrl*/,
+                            DWORD /*dwCombineFlags*/, LPWSTR /*pwzResult*/, DWORD /*cchResult*/, DWORD* /*pcchResult*/,
+                            DWORD /*dwReserved*/){
+        return INET_E_DEFAULT_ACTION;
+    }
+
+    STDMETHODIMP CompareUrl(LPCWSTR /*pwzUrl1*/, LPCWSTR /*pwzUrl2*/, DWORD /*dwCompareFlags*/){
+        return INET_E_DEFAULT_ACTION;
+    }
+
+    STDMETHODIMP QueryInfo(LPCWSTR /*pwzUrl*/, QUERYOPTION /*queryOption*/, DWORD /*dwQueryFlags*/,
+                           LPVOID /*pBuffer*/, DWORD /*cbBuffer*/, DWORD* /*pcbBuf*/, DWORD /*dwReserved*/){
+        return INET_E_DEFAULT_ACTION;
+    }
+
+    // IClassFactory
+    STDMETHODIMP CreateInstance(IUnknown *pUnkOuter, REFIID riid, void **ppvObject){
+        TRACER("TInternetProtocolFactory::CreateInstance");
+        if(pUnkOuter != nullptr)
+            return CLASS_E_NOAGGREGATION;
+        if(riid == IID_IInternetProtocol){
+            CComPtr<IInternetProtocol> proto(new TInternetProtocol(*this));
+            return proto->QueryInterface(riid, ppvObject);
         }
-
-        STDMETHODIMP QueryInfo(LPCWSTR /*pwzUrl*/, QUERYOPTION /*queryOption*/, DWORD /*dwQueryFlags*/,
-            LPVOID /*pBuffer*/, DWORD /*cbBuffer*/, DWORD* /*pcbBuf*/, DWORD /*dwReserved*/)
-        {
-            return INET_E_DEFAULT_ACTION;
+        if(riid == IID_IInternetProtocolInfo){
+            return QueryInterface(riid, ppvObject);
         }
-
-    } ipinf;
+        return E_NOINTERFACE;
+    }
+    STDMETHODIMP LockServer(BOOL /*fLock*/){ return S_OK; }
 
     struct TInternetProtocol :public IInternetProtocol
     {
-        TInternetProtocol(s::wui::window::Impl& impl) : impl_(impl), refCount(1), data(nullptr), dataLen(0), dataCurrPos(0) { }
+        TInternetProtocol(Impl& impl) : impl_(impl), refCount(1), data(nullptr), dataLen(0), dataCurrPos(0) { }
         virtual ~TInternetProtocol() { }
 
         // IUnknown
@@ -1492,10 +1511,10 @@ struct s::wui::window::Impl : public IUnknown {
             IInternetProtocolSink *pIProtSink,
             IInternetBindInfo *pIBindInfo,
             DWORD grfSTI,
-            HANDLE_PTR dwReserved) {
+            HANDLE_PTR dwReserved)
+        {
             TRACER("TInternetProtocol::Start");
-            std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
-            std::string url(convertor.to_bytes(szUrl));
+            std::string url(impl_.convertor.to_bytes(szUrl));
             auto& pdata = impl_.getEmbeddedSource(url);
             data = std::get<0>(pdata);
             dataLen = std::get<1>(pdata);
@@ -1541,7 +1560,7 @@ struct s::wui::window::Impl : public IUnknown {
         STDMETHODIMP LockRequest(DWORD /*dwOptions*/) { return S_OK; }
         STDMETHODIMP UnlockRequest() { return S_OK; }
     protected:
-        s::wui::window::Impl& impl_;
+        Impl& impl_;
         LONG refCount;
 
         // those are filled in Start() and represent data to be sent
@@ -1551,109 +1570,9 @@ struct s::wui::window::Impl : public IUnknown {
         size_t dataCurrPos;
     };
 
-
-    struct TInternetProtocolFactory : public IClassFactory
-    {
-        s::wui::window::Impl *webf;
-
-        // IUnknown
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-        ULONG STDMETHODCALLTYPE Release() { TRACER("TOleInPlaceFrame::Release"); return webf->Release(); }
-
-        // IClassFactory
-        STDMETHODIMP CreateInstance(IUnknown *pUnkOuter, REFIID riid, void **ppvObject) {
-            TRACER("TInternetProtocolFactory::CreateInstance");
-            if (pUnkOuter != nullptr)
-                return CLASS_E_NOAGGREGATION;
-            if (riid == IID_IInternetProtocol) {
-                CComPtr<IInternetProtocol> proto(new TInternetProtocol(*webf));
-                return proto->QueryInterface(riid, ppvObject);
-            }
-            if (riid == IID_IInternetProtocolInfo) {
-                return webf->ipinf.QueryInterface(riid, ppvObject);
-            }
-            return E_NOINTERFACE;
-        }
-        STDMETHODIMP LockServer(BOOL /*fLock*/) { return S_OK; }
-    } ipfac;
-
-    struct TInternetSecurityManager : public IInternetSecurityManager
-    {
-        s::wui::window::Impl *webf;
-
-        // IUnknown
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) { return webf->QueryInterface(riid, ppv); }
-        ULONG STDMETHODCALLTYPE AddRef() { return webf->AddRef(); }
-        ULONG STDMETHODCALLTYPE Release() { TRACER("TInternetProtocolInfo::Release"); return webf->Release(); }
-
-        STDMETHODIMP SetSecuritySite(IInternetSecurityMgrSite *pSite) {
-            return INET_E_DEFAULT_ACTION;
-        }
-
-        STDMETHODIMP GetSecuritySite(IInternetSecurityMgrSite **ppSite) {
-            return INET_E_DEFAULT_ACTION;
-        }
-
-        STDMETHODIMP MapUrlToZone(LPCWSTR pwszUrl, DWORD *pdwZone, DWORD dwFlags) {
-            return INET_E_DEFAULT_ACTION;
-        }
-
-#define SECURITY_DOMAIN "file:"
-
-        STDMETHODIMP GetSecurityId(LPCWSTR pwszUrl, BYTE *pbSecurityId, DWORD *pcbSecurityId, DWORD_PTR dwReserved) {
-            if (*pcbSecurityId >= 512)
-            {
-                memset(pbSecurityId, 0, *pcbSecurityId);
-                strncpy_s((char*)pbSecurityId, *pcbSecurityId, SECURITY_DOMAIN, strlen(SECURITY_DOMAIN));
-                pbSecurityId[strlen(SECURITY_DOMAIN) + 1] = 0;
-                pbSecurityId[strlen(SECURITY_DOMAIN) + 2] = 0;
-                pbSecurityId[strlen(SECURITY_DOMAIN) + 3] = 0;
-                pbSecurityId[strlen(SECURITY_DOMAIN) + 4] = 0;
-
-                *pcbSecurityId = (DWORD)strlen(SECURITY_DOMAIN) + 4;
-                return S_OK;
-            }
-            return INET_E_DEFAULT_ACTION;
-        }
-
-        STDMETHODIMP ProcessUrlAction(LPCWSTR pwszUrl, DWORD dwAction, BYTE *pPolicy, DWORD cbPolicy, BYTE *pContext, DWORD cbContext, DWORD dwFlags, DWORD dwReserved) {
-            DWORD dwPolicy = URLPOLICY_ALLOW;
-            if (cbPolicy >= sizeof(DWORD))
-            {
-                *(DWORD*)pPolicy = dwPolicy;
-                return S_OK;
-            }
-
-            return INET_E_DEFAULT_ACTION;
-        }
-
-        STDMETHODIMP QueryCustomPolicy( LPCWSTR pwszUrl, REFGUID guidKey, BYTE **ppPolicy, DWORD *pcbPolicy, BYTE *pContext, DWORD cbContext, DWORD dwReserved) {
-            return INET_E_DEFAULT_ACTION;
-        }
-
-        STDMETHODIMP SetZoneMapping(DWORD dwZone, LPCWSTR lpszPattern, DWORD dwFlags) {
-            return INET_E_DEFAULT_ACTION;
-        }
-
-        STDMETHODIMP GetZoneMappings(DWORD dwZone, IEnumString **ppenumString, DWORD dwFlags) {
-            return INET_E_DEFAULT_ACTION;
-        }
-
-    } isecm;
-
     inline Impl(s::wui::window& w) : wb_(w){
         TRACER("window::Impl::Impl");
         ref = 0;
-        clientsite.webf = this;
-        site.webf = this;
-        frame.webf = this;
-        dispatch.webf = this;
-        uihandler.webf = this;
-        showui.webf = this;
-        ipfac.webf = this;
-        ipinf.webf = this;
-        isecm.webf = this;
         this->hhost = 0;
         ibrowser = 0;
         cookie = 0;
@@ -1663,7 +1582,10 @@ struct s::wui::window::Impl : public IUnknown {
 
     inline ~Impl(){
         TRACER("window::Impl::~Impl");
-        assert(ref <= 1); // \todo: sometimes one final IOleClientSite::Release() does not get called
+
+        // \todo: sometimes one final IOleClientSite::Release() does not get called
+        assert(ref <= 1);
+        // e.g: when http://www.google.com is called
 
         for(auto it = wlist.begin(), ite = wlist.end(); it != ite; ++it){
             if(*it == this){
@@ -1674,6 +1596,8 @@ struct s::wui::window::Impl : public IUnknown {
         UnregisterInternetProtocolFactory();
     }
 
+    static std::vector<Impl*> wlist;
+
     s::wui::window& wb_;
     HWND hhost;               // This is the window that hosts us
     IWebBrowser2 *ibrowser;   // Our pointer to the browser itself. Released in Close().
@@ -1681,7 +1605,10 @@ struct s::wui::window::Impl : public IUnknown {
                               //
     bool hasscrollbars;       // This is read from WS_VSCROLL|WS_HSCROLL at WM_CREATE
     std::string curl;         // This was the url that the user just clicked on
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> convertor;
 };
+
+std::vector<s::wui::window::Impl*> s::wui::window::Impl::wlist;
 
 class s::application::Impl{
     s::application& app;
@@ -1689,7 +1616,7 @@ public:
     inline Impl(s::application& a) : app(a){
         ::_tzset();
         if(::OleInitialize(NULL) != S_OK){
-            throw std::runtime_error(std::string("OleInitialize() failed:") + GetLastErrorAsString());
+            throw s::wui::exception(std::string("OleInitialize() failed:") + GetLastErrorAsString());
         }
 
         char apath[MAX_PATH];
@@ -1697,7 +1624,7 @@ public:
         if(rv == 0){
             DWORD ec = GetLastError();
             assert(ec != ERROR_SUCCESS);
-            throw std::runtime_error(std::string("Internal error retrieving process path:") + GetLastErrorAsString());
+            throw s::wui::exception(std::string("Internal error retrieving process path:") + GetLastErrorAsString());
         }
 
         app.path = apath;
@@ -1726,7 +1653,7 @@ public:
         while(::GetMessage(&msg, NULL, 0, 0) != 0){
             if(!::TranslateAccelerator(msg.hwnd, hAccelTable, &msg)){
                 bool done = false;
-                for(auto w : wlist){
+                for(auto w : s::wui::window::Impl::wlist){
                     done = w->hookMessage(msg);
                     if(done){
                         break;
@@ -1750,7 +1677,7 @@ public:
         /// \todo Use SHGetKnownFolderPath for vista and later.
         HRESULT hr = ::SHGetFolderPathA(NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, chPath);
         if(!SUCCEEDED(hr)){
-            throw std::runtime_error(std::string("Internal error retrieving data directory:") + GetErrorAsString(hr));
+            throw s::wui::exception(std::string("Internal error retrieving data directory:") + GetErrorAsString(hr));
         }
         std::string data(chPath);
         std::replace(data.begin(), data.end(), '\\', '/');
@@ -2020,24 +1947,24 @@ extern "C" {
     JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initNative(JNIEnv* env, jobject activity, jstring jtag, jobjectArray jparams, jobject assetManager) {
         jclass activityCls = env->FindClass("com/renjipanicker/wui");
         if (!activityCls) {
-            throw std::runtime_error(std::string("unable to obtain wui class"));
+            throw s::wui::exception(std::string("unable to obtain wui class"));
         }
 
         _s_activityCls = reinterpret_cast<jclass>(env->NewGlobalRef(activityCls));
 
         _s_setObjectFn = env->GetMethodID(_s_activityCls, "setObject", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
         if (!_s_setObjectFn) {
-            throw std::runtime_error(std::string("unable to obtain wui::setObject"));
+            throw s::wui::exception(std::string("unable to obtain wui::setObject"));
         }
 
         _s_goEmbeddedFn = env->GetMethodID(_s_activityCls, "go_embedded", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
         if (!_s_goEmbeddedFn) {
-            throw std::runtime_error(std::string("unable to obtain wui::go_embedded"));
+            throw s::wui::exception(std::string("unable to obtain wui::go_embedded"));
         }
 
         _s_goStandardFn = env->GetMethodID(_s_activityCls, "go_standard", "(Ljava/lang/String;)V");
         if (!_s_goStandardFn) {
-            throw std::runtime_error(std::string("unable to obtain wui::go_standard"));
+            throw s::wui::exception(std::string("unable to obtain wui::go_standard"));
         }
 
         _s_tag = convertJniStringToStdString(env, jtag);
