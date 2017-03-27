@@ -95,7 +95,7 @@ public class wui {
             }
             @Override
             public void onPageFinished(WebView view, String url) {
-                //Log.d(TAG, "pfinish:" + url);
+                Log.d(TAG, "pfinish:" + url);
             }
 
             @Override
