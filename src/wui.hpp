@@ -435,21 +435,6 @@ namespace s {
             inline exception(const std::string& msg) : runtime_error(msg){}
         };
 
-        /// \brief cross-platform menu functions
-        /// \todo: to implement
-        struct menu {
-            std::string name;
-            inline menu(const std::string& n) : name(n) {}
-            inline menu& submenu(const std::string& /*n*/, std::function<void()> /*fn*/) {
-                return *this;
-            }
-        };
-
-        /// \brief cross-platform systray functions
-        /// \todo: to implement
-        struct systray {
-        };
-
         /// \brief page content location
         enum class ContentSourceType {
             Embedded, /// \brief content is embedded in the executable
@@ -473,22 +458,14 @@ namespace s {
             std::function<void()> onOpen;
             std::function<void()> onClose;
             std::function<void(const std::string&)> onLoad;
-            std::function<void(const std::string&)> onLog;
-            std::function<void()> onPreferences;
-            std::function<void()> onNewFile;
-            std::function<void()> onOpenFile;
-            std::function<void()> onSaveFile;
-            std::function<void(const std::string&)> onSaveAsFile;
-            std::function<void()> onCloseFile;
-            std::function<void()> onAbout;
-            std::function<void(const std::string&)> onHelp; // (context)
 
         public:
             void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst);
             void setContentSourceResource(const std::string& path);
             bool open();
             void setDefaultMenu();
-            void setMenu(const menu& m);
+            void setMenu(const std::string& path, const std::string& name, const std::string& key, std::function<void()> cb);
+
             /// \todo: sethscroll, setvscroll, settitle, setpos, etc
 
             window();

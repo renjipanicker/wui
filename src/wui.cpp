@@ -180,6 +180,28 @@ namespace {
         "}\n"
         ;
         wb.eval(initstr);
+
+        auto& wobj = wb.newObject("wui");
+        wobj.fn("addMenu") = [&wb](const std::string& path, const std::string& name, const std::string& key, const std::string& cb) {
+            wb.setMenu(path, name, key, [&wb, cb](){
+                wb.eval("var x = new " + cb + "();");
+            });
+        };
+        wobj.fn("setDefaultMenu") = [&wb]() {
+            wb.setDefaultMenu();
+        };
+        wobj.fn("hasNativeMenu") = []() {
+#ifdef WUI_WIN
+            return true;
+#endif
+#ifdef WUI_OSX
+            return true;
+#endif
+#ifdef WUI_NDK
+            return false;
+#endif
+        };
+        wb.addObject(wobj);
     }
 }
 
@@ -370,30 +392,35 @@ public:
         return csd.getEmbeddedSource(url);
     }
 
-    inline NSMenuItem* createMenuItem(id menu, NSString* title, NSString* keyEq, std::function<void()> fn = std::function<void()>()) {
-        NSMenuItem* menuItem = [[NSMenuItem alloc] init];
-        [menuItem setTitle:title];
-        if(keyEq != 0){
-            [menuItem setKeyEquivalent:keyEq];
+    inline NSMenuItem* createMenuItem(NSMenu* menu, NSString* title, NSString* key, std::function<void()> cb = std::function<void()>()) {
+        NSMenuItem* menuItem = [menu itemWithTitle:title];
+        if(!menuItem){
+            menuItem = [[NSMenuItem alloc] init];
+            [menuItem setTitle:title];
+            [menu addItem : menuItem];
         }
-        if(fn){
+
+        if(cb){
             [menuItem setBlockAction:^(id /*sender*/) {
-                fn();
+                cb();
             }];
         }
-        [menu addItem : menuItem];
+
+        if(key != 0){
+            [menuItem setKeyEquivalent:key];
+        }
+
         return menuItem;
     }
 
     inline NSMenu* createMenu(id menubar, NSString* title) {
-        auto menuItem = createMenuItem(menubar, title, 0);
+        auto menuItem = createMenuItem(menubar, title, 0, 0);
         NSMenu* menu = [[NSMenu alloc] initWithTitle:title];
         [menuItem setSubmenu : menu];
         return menu;
     }
 
     inline void setDefaultMenu() {
-        auto& wb = this->wb;
         id appName = [[NSProcessInfo processInfo] processName];
 
         NSMenu* menubar = [[NSMenu alloc] initWithTitle:@"Filex"];
@@ -402,7 +429,7 @@ public:
         NSMenu* appMenu = createMenu(menubar, @"<AppName>"); // OSX always uses the actual app name here
 
         NSString* aboutTitle = [@"About " stringByAppendingString:appName];
-        createMenuItem(appMenu, aboutTitle, 0);
+        createMenuItem(appMenu, aboutTitle, 0, 0);
 
         NSString* quitTitle = [@"Quit " stringByAppendingString:appName];
         createMenuItem(appMenu, quitTitle, @"q", [](){
@@ -416,11 +443,7 @@ public:
 
         createMenuItem(fileMenu, @"Open", @"o");
         createMenuItem(fileMenu, @"Close", @"w");
-        createMenuItem(fileMenu, @"Save", @"s", [&wb](){
-            if(wb.onSaveFile){
-                wb.onSaveFile();
-            }
-        });
+        createMenuItem(fileMenu, @"Save", @"s");
 
         NSMenu* editMenu = createMenu(menubar, @"Edit");
         createMenuItem(editMenu, @"Undo", @"z");
@@ -433,7 +456,21 @@ public:
         createMenuItem(helpMenu, @"Help", @"/");
     }
 
-    inline void setMenu(const menu&) {
+    inline void setMenu(const std::string& path, const std::string& name, const std::string& key, std::function<void()> cb) {
+        NSString* mpath = getNSString(path);
+        NSString* mname = getNSString(name);
+        NSString* mkey = getNSString(key);
+
+        NSArray* pathparts = [mpath componentsSeparatedByString:@"/"];
+        NSMenu *mainMenu = [[NSApplication sharedApplication] mainMenu];
+
+        NSMenu *currMenu = mainMenu;
+        for (NSString* iname in pathparts) {
+            NSMenuItem* mi = [currMenu itemWithTitle:iname];
+            currMenu = [mi submenu];
+        }
+
+        createMenuItem(currMenu, mname, mkey, cb);
     }
 
     inline void setAlwaysOnTop(const bool& aot) {
@@ -474,10 +511,6 @@ public:
             [window setBackgroundColor : [NSColor blueColor]];
         }
 
-#ifdef NO_NIB
-        setDefaultMenu();
-#endif
-
         assert(wd != 0);
         [webView setWantsLayer : YES];
         [webView setCanDrawConcurrently : YES];
@@ -485,15 +518,6 @@ public:
         [webView setUIDelegate : wd];
         [webView setResourceLoadDelegate : wd];
         [webView setPolicyDelegate : wd];
-
-        BOOL _allowKeyCapture = TRUE;
-        [NSEvent addLocalMonitorForEventsMatchingMask : NSKeyDownMask
-                                              handler : ^ NSEvent * (NSEvent * event) {
-                                                  if (!_allowKeyCapture) {
-                                                      [window makeFirstResponder : window.contentView];
-                                                  }
-                                                  return event;
-                                              }];
 
         // set webView as content of top-level window
         assert(window != nullptr);
@@ -1039,10 +1063,6 @@ struct s::wui::window::Impl
     }
 
     inline void setDefaultMenu(){
-    }
-
-    inline void setMenu(const menu& /*m*/){
-        throw s::wui::exception(std::string("Not implemented: setMenu"));
     }
 
     inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst){
@@ -1808,9 +1828,6 @@ public:
     inline void setDefaultMenu() {
     }
 
-    inline void setMenu(const menu& m) {
-    }
-
     inline std::string invoke(const std::string& obj, const std::string& fn, const std::vector<std::string>& params) {
         auto& jo = wb.getObject(obj);
         auto rv = jo.invoke(fn, params);
@@ -2074,9 +2091,6 @@ public:
     inline void setDefaultMenu() {
     }
 
-    inline void setMenu(const menu& m) {
-    }
-
     inline void go(const std::string& url) {
     }
 
@@ -2126,8 +2140,8 @@ void s::wui::window::setDefaultMenu() {
     impl_->setDefaultMenu();
 }
 
-void s::wui::window::setMenu(const menu& m) {
-    impl_->setMenu(m);
+void s::wui::window::setMenu(const std::string& path, const std::string& name, const std::string& key, std::function<void()> cb) {
+    impl_->setMenu(path, name, key, cb);
 }
 
 void s::wui::window::go(const std::string& url) {

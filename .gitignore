@@ -17,3 +17,5 @@ packer.osx
 packer.exe
 packer.obj
 
+.DS_Store
+
