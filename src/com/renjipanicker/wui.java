@@ -189,3 +189,29 @@ public class wui {
         });
     }
 };
+
+/*
+//https://stackoverflow.com/questions/9172805/android-webview-inside-dialog-or-popup
+AlertDialog.Builder alert = new AlertDialog.Builder(this);
+alert.setTitle("Title here");
+
+WebView wv = new WebView(this);
+wv.loadUrl("http:\\www.google.com");
+wv.setWebViewClient(new WebViewClient() {
+    @Override
+    public boolean shouldOverrideUrlLoading(WebView view, String url) {
+        view.loadUrl(url);
+
+        return true;
+    }
+});
+
+alert.setView(wv);
+alert.setNegativeButton("Close", new DialogInterface.OnClickListener() {
+    @Override
+    public void onClick(DialogInterface dialog, int id) {
+        dialog.dismiss();
+    }
+});
+alert.show();
+*/

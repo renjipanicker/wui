@@ -100,47 +100,58 @@ namespace {
             path = p;
         }
 
+        inline auto isHTTP(const std::string& url) const {
+            if (url.substr(0, 4) == "http") {
+                return true;
+            }
+            if (url.substr(0, 5) == "https") {
+                return true;
+            }
+            return false;
+        }
         inline auto normaliseUrl(std::string url) {
+            if (isHTTP(url)) {
+                return url;
+            }
             if(type == s::wui::ContentSourceType::Embedded){
                 if ((url.length() < empfx.length()) || (url.substr(0, empfx.length()) != empfx)) {
                     url = empfx + "://app.res/" + url;
                 }
             }else if(type == s::wui::ContentSourceType::Resource){
-                if (url.substr(0, 4) != "http") {
 #ifdef WUI_WIN
-                    url = "res://" + s::app().name + "/" + url;
+                url = "res://" + s::app().name + "/" + url;
 #endif
 #ifdef WUI_OSX
-                    auto upath = getCString([[NSBundle mainBundle] resourcePath]);
-                    upath += path;
-                    upath += url;
-                    url = upath;
+                auto rpath = [[NSBundle mainBundle] resourcePath];
+                auto upath = getCString(rpath);
+                upath += path;
+                upath += url;
+                url = upath;
 #endif
 #ifdef WUI_NDK
-                    auto rpath = path;
-                    if(rpath.at(0) == '/') {
-                        rpath = rpath.substr(1);
-                    }
-                    if(rpath.at(rpath.length()-1) == '/') {
-                        rpath = rpath.substr(0, rpath.length()-1);
-                    }
-                    url = "file:///android_asset/" + rpath + "/" + url;
-#endif
+                auto rpath = path;
+                if(rpath.at(0) == '/') {
+                    rpath = rpath.substr(1);
                 }
+                if(rpath.at(rpath.length()-1) == '/') {
+                    rpath = rpath.substr(0, rpath.length()-1);
+                }
+                url = "file:///android_asset/" + rpath + "/" + url;
+#endif
             }
             return url;
         }
 
-        inline auto stripPrefixIf(std::string url, const std::string& pfx) {
+        inline auto stripPrefixIf(const std::string& url, const std::string& pfx) const {
             if ((url.length() >= pfx.length()) && (url.substr(0, pfx.length()) == pfx)) {
-                url = url.substr(pfx.length());
+                return url.substr(pfx.length());
             }
             return url;
         }
 
-        inline const auto& getEmbeddedSource(std::string url) {
+        inline auto getEmbeddedSourceURL(const std::string& surl) const {
             assert(type == s::wui::ContentSourceType::Embedded);
-            assert(lst != nullptr);
+            auto url = surl;
             url = stripPrefixIf(url, empfx);
             url = stripPrefixIf(url, ":");
             url = stripPrefixIf(url, "//");
@@ -149,6 +160,12 @@ namespace {
             if (url.at(url.length() - 1) == '/') {
                 url = url.substr(0, url.length() - 1);
             }
+            return url;
+        }
+
+        inline const auto& getEmbeddedSource(const std::string& surl) {
+            auto url = getEmbeddedSourceURL(surl);
+            assert(lst != nullptr);
             auto fit = lst->find(url);
             if(fit == lst->end()){
                 throw s::wui::exception(std::string("unknown url:") + url);
@@ -261,9 +278,57 @@ inline s::wui::window::Impl& s::wui::window::impl() {
 @end
 
 /////////////////////////////////
+@interface WuiBrowserView : WebView {
+}
+@end
+
+/////////////////////////////////
+@implementation WuiBrowserView
+- (BOOL) acceptsFirstResponder {
+    NSLog(@"acceptsFirstResponder called!");
+    return YES;
+}
+
+- (BOOL)wantsScrollEventsForSwipeTrackingOnAxis:(NSEventGestureAxis)axis {
+    return YES;
+}
+
+- (void)scrollWheel:(NSEvent *)event {
+    CGFloat x = [event scrollingDeltaX];
+
+    //NSLog(@"user delta-scrolled %f horizontally and %f vertically", [event scrollingDeltaX], [event scrollingDeltaY]);
+
+    if (x != 0) {
+        (x > 0) ? [self goBack:self] : [self goForward:self];
+    }
+}
+
+@end
+
+/////////////////////////////////
+@interface WuiSecondaryView : WebView {
+@public
+    NSWindow* win_;
+}
+@end
+
+/////////////////////////////////
+@implementation WuiSecondaryView
+- (void)keyDown: (NSEvent *) event {
+//    NSLog(@"keyDown %d called!", [event keyCode]);
+    if ([event keyCode] == 53){ //For escape key
+        [win_ orderOut:win_];
+    }
+}
+
+@end
+
+/////////////////////////////////
 @interface AppDelegate : NSObject<NSApplicationDelegate, WebFrameLoadDelegate, WebResourceLoadDelegate, WebUIDelegate, WebPolicyDelegate>{
 @public
     s::wui::window* wb_;
+    NSWindow* win_;
+    WebView* wv_;
 }
 @end
 
@@ -370,14 +435,16 @@ public:
 
 /////////////////////////////////
 struct s::wui::window::Impl {
+    WuiSecondaryView* webView2;
+    NSWindow* window2;
 private:
     s::wui::window& wb;
     NSWindow* window;
-    WebView* webView;
+    WuiBrowserView* webView;
     AppDelegate* wd;
     ContentSourceData csd;
 public:
-    inline Impl(s::wui::window& w) : wb(w), window(nullptr), webView(nullptr), wd(nullptr) {
+    inline Impl(s::wui::window& w) : wb(w), window(nullptr), webView(nullptr), webView2(nullptr), wd(nullptr) {
     }
 
     inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst) {
@@ -392,11 +459,14 @@ public:
         return csd.getEmbeddedSource(url);
     }
 
+    inline auto& getContentSource() const {return csd;}
+
     inline NSMenuItem* createMenuItem(NSMenu* menu, NSString* title, NSString* key, std::function<void()> cb = std::function<void()>()) {
         NSMenuItem* menuItem = [menu itemWithTitle:title];
         if(!menuItem){
             menuItem = [[NSMenuItem alloc] init];
             [menuItem setTitle:title];
+//            [menuItem setTarget:window];
             [menu addItem : menuItem];
         }
 
@@ -417,6 +487,7 @@ public:
         auto menuItem = createMenuItem(menubar, title, 0, 0);
         NSMenu* menu = [[NSMenu alloc] initWithTitle:title];
         [menuItem setSubmenu : menu];
+//        [menu setAutoenablesItems:YES];
         return menu;
     }
 
@@ -424,6 +495,7 @@ public:
         id appName = [[NSProcessInfo processInfo] processName];
 
         NSMenu* menubar = [[NSMenu alloc] initWithTitle:@"Filex"];
+//        [menubar setAutoenablesItems:YES];
         [NSApp setMainMenu : menubar];
 
         NSMenu* appMenu = createMenu(menubar, @"<AppName>"); // OSX always uses the actual app name here
@@ -481,12 +553,35 @@ public:
         }
     }
 
-    inline bool open() {
+    inline bool open(int left, int top, int width, int height) {
         // get singleton app instance
         NSApplication *app = [NSApplication sharedApplication];
-        // create WebView instance
-        NSRect frame = NSMakeRect(100, 0, 400, 800);
-        webView = [[WebView alloc] initWithFrame:frame frameName : @"myWV" groupName : @"webViews"];
+
+        NSArray *screenArray = [NSScreen screens];
+        NSScreen *screen = [screenArray objectAtIndex:0];
+        NSRect screenRect = [screen visibleFrame];
+
+        if(left < 0){
+            left = screenRect.size.width + left;
+        }
+
+        if(top < 0){
+            top = screenRect.size.height + top;
+        }
+
+        if(width < 0){
+            width = screenRect.size.width + width - left + 1;
+        }
+
+        if(height < 0){
+            height = screenRect.size.height + height - top + 1;
+        }
+
+        // position for main window
+        NSRect frame = NSMakeRect(left, top, width, height);
+
+        // create WuiBrowserView instance
+        webView = [[WuiBrowserView alloc] initWithFrame:frame frameName : @"myWV" groupName : @"webViews"];
 
         // get AppDelegate
         wd = (AppDelegate*)[app delegate];
@@ -519,6 +614,25 @@ public:
         [webView setResourceLoadDelegate : wd];
         [webView setPolicyDelegate : wd];
 
+        // create secondary window
+        window2 = [[NSWindow alloc]
+                  initWithContentRect:frame
+                  styleMask : NSTitledWindowMask | NSResizableWindowMask
+                  backing : NSBackingStoreBuffered
+                  defer : NO];
+        [window2 setLevel:NSMainMenuWindowLevel + 1];
+//        [window2 setPreferredBackingLocation:NSWindowBackingLocationVideoMemory];
+
+        webView2 = [[WuiSecondaryView alloc] initWithFrame:frame frameName : @"myWV2" groupName : @"webViews"];
+        [webView2 setUIDelegate : wd];
+
+        [webView2 setFrameLoadDelegate : wd];
+        [webView2 setResourceLoadDelegate : wd];
+        [webView2 setPolicyDelegate : wd];
+
+        webView2->win_ = window2;
+        [window2 setContentView : webView2];
+
         // set webView as content of top-level window
         assert(window != nullptr);
         [window setContentView : webView];
@@ -529,6 +643,8 @@ public:
 
         // intialize AppDelegate
         wd->wb_ = &wb;
+        wd->win_ = window;
+        wd->wv_ = nullptr;
 
         return true;
     }
@@ -544,7 +660,9 @@ public:
     inline void go(const std::string& urlx) {
         auto surl = csd.normaliseUrl(urlx);
         NSString *pstr = getNSString(surl);
-        loadPage(pstr);
+        dispatch_async(dispatch_get_main_queue(), ^{
+           loadPage(pstr);
+        });
     }
 
     inline void eval(const std::string& str) {
@@ -592,6 +710,7 @@ public:
 -(void)startLoading {
     NSURL *url = [[self request] URL];
     NSString *pathString = [url resourceSpecifier];
+    //NSLog(@"Loading %@", pathString);
 
     NSApplication *app = [NSApplication sharedApplication];
     auto wd = (AppDelegate*)[app delegate];
@@ -639,12 +758,63 @@ public:
     }
 }
 
+- (WebView *)webView:(WuiBrowserView *)sender createWebViewWithRequest:(NSURLRequest *)request {
+//    NSLog(@"createWebViewWithRequest: %@, %@", request, [[request URL] absoluteString]);
+    unused(sender);
+    unused(request);
+    wv_ = wb_->impl().webView2;
+    return wv_;
+}
+
+- (void)webViewShow:(WebView *)sender {
+//    NSLog(@"webViewShow");
+    unused(sender);
+    [wb_->impl().window2 makeKeyAndOrderFront:wb_->impl().window2];
+}
+
 -(BOOL)applicationShouldTerminateAfterLastWindowClosed : (NSApplication *)theApplication {
     unused(theApplication);
     return YES;
 }
 
-- (void) webView:(WebView*)webView addMessageToConsole:(NSDictionary*)message {
+//- (void)webView:(WebView *)sender willPerformClientRedirectToURL:(NSURL *)URL delay:(NSTimeInterval)seconds fireDate:(NSDate *)date forFrame:(WebFrame *)frame {
+//    NSLog(@"willPerformClientRedirectToURL: %@", [URL absoluteString]);
+//}
+
+//- (void)webView:(WebView *)webView didReceiveServerRedirectForProvisionalLoadForFrame:(WebFrame *)frame {
+//    NSLog(@"%@",[[[[frame provisionalDataSource] request] URL] absoluteString]);
+//}
+
+- (void)webView:(WebView *)webView decidePolicyForNavigationAction:(NSDictionary *)actionInformation request:(NSURLRequest *)request frame:(WebFrame *)frame decisionListener:(id)listener {
+    NSString *urlString = [[request URL] absoluteString];
+    //NSLog(@"decidePolicyForNavigationAction: %@", urlString);
+    if (wb_->onNavigating) {
+        auto url = getCString(urlString);
+        if(wb_->onNavigating(url)){
+            [listener use];
+        }else{
+            [listener ignore];
+        }
+    }else{
+        [listener use];
+    }
+}
+
+- (void)webView:(WuiBrowserView *)sender didFinishLoadForFrame:(WebFrame *)frame {
+    unused(sender);
+    NSString *urlString = [[NSString alloc] initWithString:[[[[frame dataSource] request] URL] absoluteString]];
+//    NSLog(@"OnLoad: %@", urlString);
+    auto url = getCString(urlString);
+    assert(wb_);
+    auto& csd = wb_->impl().getContentSource();
+    auto surl = url;
+    surl = csd.getEmbeddedSourceURL(surl);
+    if (wb_->onLoad) {
+        wb_->onLoad(surl);
+    }
+}
+
+- (void) webView:(WuiBrowserView*)webView addMessageToConsole:(NSDictionary*)message {
     unused(webView);
     if (![message isKindOfClass:[NSDictionary class]]) {
         return;
@@ -656,23 +826,26 @@ public:
           [message objectForKey:@"message"]);
 }
 
--(void)webView:(WebView *)sender runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WebFrame *)frame {
+-(void)webView:(WuiBrowserView *)sender runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WebFrame *)frame {
     unused(sender);
     unused(frame);
     NSAlert *alert = [[NSAlert alloc] init];
     [alert addButtonWithTitle:@"OK"];
     [alert setMessageText:message];
-    [alert runModal];
+
+    [alert beginSheetModalForWindow:win_ completionHandler:^(NSModalResponse returnCode) {
+        if (returnCode == NSAlertSecondButtonReturn) {
+            return;
+        }
+        //NSLog(@"Modal closed");
+    }];
 }
 
--(void)webView:(WebView *)webView windowScriptObjectAvailable : (WebScriptObject *)wso {
+-(void)webView:(WuiBrowserView *)webView windowScriptObjectAvailable : (WebScriptObject *)wso {
     unused(wso);
     unused(webView);
     assert(wb_);
     addCommonPage(*wb_);
-    if (wb_->onLoad) {
-        wb_->onLoad("");
-    }
 }
 
 @end
@@ -1012,7 +1185,7 @@ struct s::wui::window::Impl
         }
     }
 
-    inline bool open(){
+    inline bool open(const int& left, const int& top, const int& width, const int& height){
         TRACER("open");
         WNDCLASSEX wcex = {0};
         HINSTANCE hInstance = GetModuleHandle(0);
@@ -1788,7 +1961,7 @@ public:
     }
 
     inline void onLoad(const std::string& url) {
-        ALOG("onLoad:%s", url.c_str());
+        //ALOG("onLoad:%s", url.c_str());
 
         if(url.compare(0, jspfx.length(), jspfx) == 0){
             return;
@@ -1818,7 +1991,7 @@ public:
         return csd.getEmbeddedSource(url);
     }
 
-    inline bool open() {
+    inline bool open(const int& left, const int& top, const int& width, const int& height) {
         if(wb.onOpen){
             wb.onOpen();
         }
@@ -1828,6 +2001,9 @@ public:
     inline void setDefaultMenu() {
     }
 
+    inline void setMenu(const std::string& path, const std::string& name, const std::string& key, std::function<void()> cb) {
+    }
+
     inline std::string invoke(const std::string& obj, const std::string& fn, const std::vector<std::string>& params) {
         auto& jo = wb.getObject(obj);
         auto rv = jo.invoke(fn, params);
@@ -1835,7 +2011,7 @@ public:
     }
 
     inline void addNativeObject(s::js::objectbase& jo, const std::string& body) {
-        ALOG("addNativeObject:%s", jo.name.c_str());
+        //ALOG("addNativeObject:%s", jo.name.c_str());
         auto fbody = jspfx + body;
         JniEnvGuard envg;
         jstring jname = envg.env->NewStringUTF(jo.name.c_str());
@@ -1911,7 +2087,9 @@ public:
 
     inline auto wait() {
         std::unique_lock<std::mutex> lk(mxq_);
-        cv_.wait(lk, [&]{return mq_.size() > 0;});
+        while(mq_.size() == 0){
+            cv_.wait(lk);
+        }
         auto fn = mq_.front();
         mq_.pop();
         return fn;
@@ -2070,6 +2248,7 @@ extern "C" {
         env->SetObjectArrayElement(ret,1,jstr);
         env->SetObjectArrayElement(ret,2,jenc);
 
+        ALOG("GetPageData:Loaded:%s(%u)", url.c_str(), len);
         return ret;
     }
 
@@ -2084,7 +2263,7 @@ public:
     inline Impl(s::wui::window& w) : wb(w) {
     }
 
-    inline bool open() {
+    inline bool open(const int& left, const int& top, const int& width, const int& height) {
         return false;
     }
 
@@ -2132,8 +2311,8 @@ void s::wui::window::setContentSourceResource(const std::string& path) {
     return impl_->setContentSourceResource(path);
 }
 
-bool s::wui::window::open() {
-    return impl_->open();
+bool s::wui::window::open(const int& left, const int& top, const int& width, const int& height) {
+    return impl_->open(left, top, width, height);
 }
 
 void s::wui::window::setDefaultMenu() {

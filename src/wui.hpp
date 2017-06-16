@@ -118,12 +118,12 @@ namespace s {
                 return rv;
             }
 
-            static inline auto convertToJS(conversion_context& /*ctx*/, const std::vector<T>& t) {
+            static inline auto convertToJS(conversion_context& ctx, const std::vector<T>& t) {
                 std::string sep;
                 std::string rv = "[";
                 for(auto& v : t){
                     rv += sep;
-                    rv += convertor<T>::convertToJS(v);
+                    rv += convertor<T>::convertToJS(ctx, v);
                     sep = ",";
                 }
                 rv += "]";
@@ -458,11 +458,12 @@ namespace s {
             std::function<void()> onOpen;
             std::function<void()> onClose;
             std::function<void(const std::string&)> onLoad;
+            std::function<bool(const std::string&)> onNavigating;
 
         public:
             void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst);
             void setContentSourceResource(const std::string& path);
-            bool open();
+            bool open(const int& left, const int& top, const int& width, const int& height);
             void setDefaultMenu();
             void setMenu(const std::string& path, const std::string& name, const std::string& key, std::function<void()> cb);
 
