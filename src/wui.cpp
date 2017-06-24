@@ -75,9 +75,6 @@ namespace {
     }
 #endif
 
-    template<typename T>
-    inline void unused(const T&){}
-
     const std::string jspfx = "javascript:";
     const std::string empfx = "embedded";
     const std::wstring empfxw = L"embedded";
@@ -220,7 +217,37 @@ namespace {
         };
         wb.addObject(wobj);
     }
-}
+
+    struct WindowRect {
+        int left;
+        int top;
+        int width;
+        int height;
+
+        /// \brief default ctor
+        inline WindowRect(const int& l, const int& t, const int& w, const int& h) : left(l), top(t), width(w), height(h) {}
+
+        /// \brief adjust position according to screen size passed as parameters
+        inline void adjust(const int& w, const int& h) {
+            if (left < 0) {
+                left = w + left;
+            }
+
+            if (top < 0) {
+                top = h + top;
+            }
+
+            if (width < 0) {
+                width = w + width - left + 1;
+            }
+
+            if (height < 0) {
+                height = h + height - top + 1;
+            }
+        }
+    };
+
+} // namespace
 
 inline s::wui::window::Impl& s::wui::window::impl() {
     return *impl_;
@@ -285,7 +312,7 @@ inline s::wui::window::Impl& s::wui::window::impl() {
 /////////////////////////////////
 @implementation WuiBrowserView
 - (BOOL) acceptsFirstResponder {
-    NSLog(@"acceptsFirstResponder called!");
+//    NSLog(@"acceptsFirstResponder called!");
     return YES;
 }
 
@@ -392,7 +419,7 @@ class s::application::Impl {
     s::application& app_;
 public:
     inline Impl(s::application& a) : app_(a) {
-        unused(app_);
+        s::js::unused(app_);
     }
 
     inline ~Impl() {
@@ -553,7 +580,7 @@ public:
         }
     }
 
-    inline bool open(int left, int top, int width, int height) {
+    inline bool open(const int& left, const int& top, const int& width, const int& height) {
         // get singleton app instance
         NSApplication *app = [NSApplication sharedApplication];
 
@@ -561,24 +588,11 @@ public:
         NSScreen *screen = [screenArray objectAtIndex:0];
         NSRect screenRect = [screen visibleFrame];
 
-        if(left < 0){
-            left = screenRect.size.width + left;
-        }
-
-        if(top < 0){
-            top = screenRect.size.height + top;
-        }
-
-        if(width < 0){
-            width = screenRect.size.width + width - left + 1;
-        }
-
-        if(height < 0){
-            height = screenRect.size.height + height - top + 1;
-        }
+        WindowRect frc(left, top, width, height);
+        frc.adjust(screenRect.size.width, screenRect.size.height);
 
         // position for main window
-        NSRect frame = NSMakeRect(left, top, width, height);
+        NSRect frame = NSMakeRect(frc.left, frc.top, frc.width, frc.height);
 
         // create WuiBrowserView instance
         webView = [[WuiBrowserView alloc] initWithFrame:frame frameName : @"myWV" groupName : @"webViews"];
@@ -740,7 +754,7 @@ public:
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
-    unused(aNotification);
+    s::js::unused(aNotification);
     if ([NSURLProtocol registerClass:[EmbeddedURLProtocol class]]) {
         //NSLog(@"URLProtocol registration successful.");
     } else {
@@ -760,20 +774,20 @@ public:
 
 - (WebView *)webView:(WuiBrowserView *)sender createWebViewWithRequest:(NSURLRequest *)request {
 //    NSLog(@"createWebViewWithRequest: %@, %@", request, [[request URL] absoluteString]);
-    unused(sender);
-    unused(request);
+    s::js::unused(sender);
+    s::js::unused(request);
     wv_ = wb_->impl().webView2;
     return wv_;
 }
 
 - (void)webViewShow:(WebView *)sender {
 //    NSLog(@"webViewShow");
-    unused(sender);
+    s::js::unused(sender);
     [wb_->impl().window2 makeKeyAndOrderFront:wb_->impl().window2];
 }
 
 -(BOOL)applicationShouldTerminateAfterLastWindowClosed : (NSApplication *)theApplication {
-    unused(theApplication);
+    s::js::unused(theApplication);
     return YES;
 }
 
@@ -801,21 +815,21 @@ public:
 }
 
 - (void)webView:(WuiBrowserView *)sender didFinishLoadForFrame:(WebFrame *)frame {
-    unused(sender);
+    s::js::unused(sender);
     NSString *urlString = [[NSString alloc] initWithString:[[[[frame dataSource] request] URL] absoluteString]];
 //    NSLog(@"OnLoad: %@", urlString);
     auto url = getCString(urlString);
     assert(wb_);
     auto& csd = wb_->impl().getContentSource();
-    auto surl = url;
-    surl = csd.getEmbeddedSourceURL(surl);
     if (wb_->onLoad) {
+        auto surl = url;
+        surl = csd.getEmbeddedSourceURL(surl);
         wb_->onLoad(surl);
     }
 }
 
 - (void) webView:(WuiBrowserView*)webView addMessageToConsole:(NSDictionary*)message {
-    unused(webView);
+    s::js::unused(webView);
     if (![message isKindOfClass:[NSDictionary class]]) {
         return;
     }
@@ -827,8 +841,8 @@ public:
 }
 
 -(void)webView:(WuiBrowserView *)sender runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WebFrame *)frame {
-    unused(sender);
-    unused(frame);
+    s::js::unused(sender);
+    s::js::unused(frame);
     NSAlert *alert = [[NSAlert alloc] init];
     [alert addButtonWithTitle:@"OK"];
     [alert setMessageText:message];
@@ -842,8 +856,8 @@ public:
 }
 
 -(void)webView:(WuiBrowserView *)webView windowScriptObjectAvailable : (WebScriptObject *)wso {
-    unused(wso);
-    unused(webView);
+    s::js::unused(wso);
+    s::js::unused(webView);
     assert(wb_);
     addCommonPage(*wb_);
 }
@@ -856,16 +870,29 @@ public:
 // This code adapted from Tobbe
 
 namespace {
+    struct Tracer {
+        const std::string name_;
+        inline Tracer(const std::string& name) : name_(name) {
+            std::cout << std::this_thread::get_id() << ":ENTER:" << name_ << std::endl;
+        }
+        inline ~Tracer() {
+            std::cout << std::this_thread::get_id() << ":LEAVE:" << name_ << std::endl;
+        }
+    };
+
 #if 0
-#define TRACER(n) std::cout << n << std::endl
+#define TRACER(n) Tracer __t__(n);
 #else
 #define TRACER(n)
 #endif
-#if 1
-#define TRACER1(n) std::cout << n << std::endl
+#if 0
+#define TRACER1(n) Tracer __t__(n);
 #else
 #define TRACER1(n)
 #endif
+
+#define WM_EVAL (WM_APP+1)
+
     inline std::string GetErrorAsString(HRESULT hr) {
         LPSTR messageBuffer = nullptr;
         size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
@@ -963,8 +990,8 @@ namespace {
 
         WCHAR wcharIndex[25];
         CComVariant varItem;
-        for(long index = 0; index < intLength; ++index){
-            wsprintf(wcharIndex, _T("%ld\0"), index);
+        for(long index = intLength; index > 0; --index){
+            wsprintf(wcharIndex, _T("%ld\0"), index-1);
             hr = DispatchGetProp(pDispatch, CComBSTR(wcharIndex), &varItem);
             if(FAILED(hr)){
                 return rv;
@@ -978,16 +1005,16 @@ namespace {
 
     struct WinObject : public IDispatch {
         inline WinObject(s::js::objectbase& jo) : jo_(jo), ref(0){
-            TRACER("WinObject::WinObject");
+            TRACER1("WinObject::WinObject");
         }
 
         inline ~WinObject(){
-            TRACER("WinObject::~WinObject");
+            TRACER1("WinObject::~WinObject");
             assert(ref == 0);
         }
 
         HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv){
-            TRACER("WinObject::QueryInterface");
+            TRACER1("WinObject::QueryInterface");
             *ppv = NULL;
 
             if(riid == IID_IUnknown || riid == IID_IDispatch){
@@ -1003,12 +1030,12 @@ namespace {
         }
 
         ULONG STDMETHODCALLTYPE AddRef(){
-            TRACER("WinObject::AddRef");
+            TRACER1("WinObject::AddRef");
             return InterlockedIncrement(&ref);
         }
 
         ULONG STDMETHODCALLTYPE Release(){
-            TRACER("WinObject::Release");
+            TRACER1("WinObject::Release");
             int tmp = InterlockedDecrement(&ref);
             assert(tmp >= 0);
             if(tmp == 0){
@@ -1032,7 +1059,7 @@ namespace {
 
         HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID /*riid*/,
                                                            LPOLESTR *rgszNames, UINT cNames, LCID /*lcid*/, DISPID *rgDispId){
-            TRACER("WinObject::GetIDsOfNames");
+            //TRACER("WinObject::GetIDsOfNames");
             HRESULT hr = S_OK;
 
             for(UINT i = 0; i < cNames; i++){
@@ -1062,7 +1089,9 @@ namespace {
                 if(dispIdMember == DISPID_VALUE + 1){
                     auto params = getStringArrayFromCOM(pDispParams, 0);
                     auto fn = getStringFromCOM(pDispParams, 1);
-                    jo_.invoke(fn, params);
+                    auto rv = jo_.invoke(fn, params);
+                    CComVariant crv(rv.c_str());
+                    crv.Detach(pVarResult);
                     return S_OK;
                 }
                 assert(false);
@@ -1091,6 +1120,7 @@ struct s::wui::window::Impl
     ContentSourceData csd;
 
     long ref;
+    std::thread::id threadID_;
 
     inline const auto& getEmbeddedSource(const std::string& url) {
         return csd.getEmbeddedSource(url);
@@ -1117,6 +1147,8 @@ struct s::wui::window::Impl
             ibrowser->Release();
             ibrowser = 0;
         }
+    }
+    inline void setMenu(const std::string& /*path*/, const std::string& /*name*/, const std::string& /*key*/, std::function<void()> /*cb*/) {
     }
 
     inline void SetFocus(){
@@ -1209,7 +1241,12 @@ struct s::wui::window::Impl
 
         std::wstring title(convertor.from_bytes(s::app().title));
 
-        HWND hWnd = CreateWindowW(WEBFORM_CLASS, title.c_str(), flags, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, (HMENU)id, hInstance, (LPVOID)this);
+        RECT rc;
+        ::SystemParametersInfo(SPI_GETWORKAREA, 0, (void*)&rc, 0);
+        WindowRect frc(left, top, width, height);
+        frc.adjust(rc.right-rc.left, rc.bottom-rc.top);
+
+        HWND hWnd = CreateWindowW(WEBFORM_CLASS, title.c_str(), flags, frc.left, frc.top, frc.width, frc.height, hwndParent, (HMENU)id, hInstance, (LPVOID)this);
         if(hWnd == NULL){
             throw s::wui::exception(std::string("Could not create window:") + GetLastErrorAsString());
         }
@@ -1246,7 +1283,24 @@ struct s::wui::window::Impl
         csd.setResourceSource(path);
     }
 
-    inline void eval(const std::string& str){
+    std::queue<std::string> evalList_;
+    std::mutex mxEval_;
+    inline void pushEval(const std::string& str) {
+        std::lock_guard<std::mutex> lk(mxEval_);
+        evalList_.push(str);
+    }
+
+    inline auto popEval() {
+        std::lock_guard<std::mutex> lk(mxEval_);
+        auto str = evalList_.front();
+        evalList_.pop();
+        return str;
+    }
+
+    inline void evalStr(const std::string& str){
+        TRACER("evalStr:" + str);
+        assert(std::this_thread::get_id() == threadID_);
+
         CComPtr<IHTMLDocument2> doc = GetDoc();
         if(doc == NULL){
             throw s::wui::exception(std::string("Unable to get document object:") + GetLastErrorAsString());
@@ -1270,6 +1324,20 @@ struct s::wui::window::Impl
         ::InvalidateRect(hhost, 0, true);
     }
 
+    inline void evalQ() {
+        auto str = popEval();
+        evalStr(str);
+    }
+
+    inline void eval(const std::string& str) {
+        if (std::this_thread::get_id() == threadID_) {
+            evalStr(str);
+        }else {
+            pushEval(str);
+            ::PostMessageA(hhost, WM_EVAL, 0, 0);
+        }
+    }
+
     inline void addNativeObject(s::js::objectbase& jo, const std::string& body){
         TRACER("addNativeObject");
         //std::cout << "addNativeObject:" << jo.name << ":" << jo.nname << ":" << body << std::endl;
@@ -1288,6 +1356,7 @@ struct s::wui::window::Impl
         v.vt = VT_I4;
         v.lVal = 0; //v.lVal=navNoHistory;
         HRESULT hr = ibrowser->Navigate((BSTR)ws.c_str(), &v, NULL, NULL, NULL);
+        s::js::unused(hr);
     }
 
     inline bool setupOle(){
@@ -1399,6 +1468,9 @@ struct s::wui::window::Impl
         case WM_SETFOCUS:
             impl->SetFocus();
             break;
+        case WM_EVAL:
+            impl->evalQ();
+            break;
         case WM_SIZE:
             impl->ibrowser->put_Width(LOWORD(lParam));
             impl->ibrowser->put_Height(HIWORD(lParam));
@@ -1407,18 +1479,29 @@ struct s::wui::window::Impl
         return DefWindowProc(hwnd, msg, wParam, lParam);
     }
 
+    inline void BeforeNavigate2(const wchar_t* burl, VARIANT_BOOL* cancel) {
+        TRACER1("BeforeNavigate2");
+        std::wstring wurl = burl;
+        if (wb_.onNavigating) {
+            std::string url(convertor.to_bytes(wurl));
+            if (!wb_.onNavigating(url)) {
+                *cancel = VARIANT_TRUE;
+            }
+        }
+    }
+
     inline void NavigateComplete2(const wchar_t* burl){
         TRACER1("NavigateComplete2");
-        std::wstring wurl = burl;
-        std::string url(convertor.to_bytes(wurl));
         addCommonPage(wb_);
         if(wb_.onLoad){
+            std::wstring wurl = burl;
+            std::string url(convertor.to_bytes(wurl));
+            url = csd.getEmbeddedSourceURL(url);
             wb_.onLoad(url);
         }
     }
 
     inline void setIcon(const std::string& favi){
-        std::cout << "set icon:favi:" << favi << std::endl;
         if(csd.type != s::wui::ContentSourceType::Embedded){
             std::cout << "set-icon skipped" << std::endl;
             return;
@@ -1426,9 +1509,9 @@ struct s::wui::window::Impl
         auto& pdata = csd.getEmbeddedSource(favi);
         auto data = std::get<0>(pdata);
         auto dataLen = std::get<1>(pdata);
+        s::js::unused(dataLen);
         auto bdata = (PBYTE)data;
         auto offset = LookupIconIdFromDirectoryEx(bdata, TRUE, 0, 0, LR_DEFAULTCOLOR);
-        //std::cout << "offset:" << offset << std::endl;
         if(offset != 0){
             HICON hIcon = ::CreateIconFromResourceEx(bdata + offset, 0, TRUE, 0x30000, 0, 0, LR_DEFAULTCOLOR);
             ::SetClassLong(hhost, GCL_HICON, (long)hIcon);
@@ -1509,7 +1592,8 @@ struct s::wui::window::Impl
         }
     }
 
-    inline void DocumentComplete(const wchar_t *url){
+
+    inline void DocumentComplete(const wchar_t* /*url*/){
         TRACER1("DocumentComplete");
         CComPtr<IHTMLDocument2> doc = GetDoc();
         if(doc == NULL){
@@ -1531,12 +1615,12 @@ struct s::wui::window::Impl
         return E_NOINTERFACE;
     }
     ULONG STDMETHODCALLTYPE AddRef() {
-        TRACER("window::Impl::AddRef");
+        //TRACER("window::Impl::AddRef");
         return InterlockedIncrement(&ref);
     }
 
     ULONG STDMETHODCALLTYPE Release() {
-        TRACER("window::Impl::Release");
+        //TRACER("window::Impl::Release");
         int tmp = InterlockedDecrement(&ref);
         assert(tmp >= 0);
         if (tmp == 0) {
@@ -1601,6 +1685,9 @@ struct s::wui::window::Impl
 
     HRESULT STDMETHODCALLTYPE Invoke(DISPID dispIdMember, REFIID /*riid*/, LCID /*lcid*/, WORD /*wFlags*/, DISPPARAMS* Params, VARIANT* pVarResult, EXCEPINFO* /*pExcepInfo*/, UINT* /*puArgErr*/){
         switch(dispIdMember){ // DWebBrowserEvents2
+        case DISPID_BEFORENAVIGATE2:
+            BeforeNavigate2(Params->rgvarg[5].pvarVal->bstrVal, Params->rgvarg[0].pboolVal);
+            break;
         case DISPID_NAVIGATECOMPLETE2:
             NavigateComplete2(Params->rgvarg[0].pvarVal->bstrVal);
             break;
@@ -1701,10 +1788,10 @@ struct s::wui::window::Impl
         // IInternetProtocol
         STDMETHODIMP Start(
             LPCWSTR szUrl,
-            IInternetProtocolSink *pIProtSink,
-            IInternetBindInfo *pIBindInfo,
-            DWORD grfSTI,
-            HANDLE_PTR dwReserved)
+            IInternetProtocolSink* pIProtSink,
+            IInternetBindInfo* /*pIBindInfo*/,
+            DWORD /*grfSTI*/,
+            HANDLE_PTR /*dwReserved*/)
         {
             TRACER("TInternetProtocol::Start");
             std::string url(impl_.convertor.to_bytes(szUrl));
@@ -1712,8 +1799,8 @@ struct s::wui::window::Impl
             data = std::get<0>(pdata);
             dataLen = std::get<1>(pdata);
             auto& mimetype = std::get<2>(pdata);
+            s::js::unused(mimetype);
             dataCurrPos = 0;
-            //std::cout << "TInternetProtocol::Start::URL:" << url << ", " << mimetype << ", len:" << dataLen << std::endl;
 
             pIProtSink->ReportProgress(BINDSTATUS_FINDINGRESOURCE, L"");
             pIProtSink->ReportProgress(BINDSTATUS_CONNECTING, L"");
@@ -1745,7 +1832,7 @@ struct s::wui::window::Impl
             *pcbRead = toRead;
             return S_OK;
         }
-        STDMETHODIMP Seek(LARGE_INTEGER dlibMove, DWORD dwOrigin, ULARGE_INTEGER *plibNewPosition) {
+        STDMETHODIMP Seek(LARGE_INTEGER /*dlibMove*/, DWORD /*dwOrigin*/, ULARGE_INTEGER* /*plibNewPosition*/) {
             TRACER("TInternetProtocol::Seek");
             // doesn't seem to be called
             return E_NOTIMPL;
@@ -1766,6 +1853,7 @@ struct s::wui::window::Impl
     inline Impl(s::wui::window& w) : wb_(w){
         TRACER("window::Impl::Impl");
         ref = 0;
+        threadID_ = std::this_thread::get_id();
         this->hhost = 0;
         ibrowser = 0;
         cookie = 0;
@@ -2363,7 +2451,7 @@ std::vector<std::string> s::asset::listFiles(const std::string& src) {
     dir onx(src);
     return onx.list();
 #else
-    unused(src);
+    s::js::unused(src);
 #endif
     std::vector<std::string> rv;
     return rv;
@@ -2377,8 +2465,8 @@ void s::asset::readFile(const std::string& filename, std::function<bool(const ch
     }
     onx.readAll(fn);
 #else
-    unused(filename);
-    unused(fn);
+    s::js::unused(filename);
+    s::js::unused(fn);
 #endif
 }
 
@@ -2421,7 +2509,7 @@ s::asset::file::file(const std::string& filename, std::ios_base::openmode) {
 #if defined(WUI_NDK)
     impl_ = std::make_unique<Impl>(filename);
 #else
-    unused(filename);
+    s::js::unused(filename);
 #endif
 }
 
@@ -2432,8 +2520,8 @@ int s::asset::file::read(char* buf, const size_t& len) {
 #if defined(WUI_NDK)
     return impl_->read(buf, len);
 #else
-    unused(buf);
-    unused(len);
+    s::js::unused(buf);
+    s::js::unused(len);
     return -1;
 #endif
 }
@@ -2442,7 +2530,7 @@ void s::asset::file::readAll(std::function<bool(const char*, const size_t&)>& fn
 #if defined(WUI_NDK)
     return impl_->readAll(fn);
 #else
-    unused(fn);
+    s::js::unused(fn);
 #endif
 }
 

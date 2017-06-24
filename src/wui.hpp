@@ -10,6 +10,9 @@
 
 namespace s {
     namespace js {
+		template<typename T>
+		inline void unused(const T&) {}
+
         /// \brief context for converting incoming function call to native
         struct conversion_context {
             std::vector<std::string> args;
@@ -167,19 +170,17 @@ namespace s {
 
         template<typename T, typename...A>
         struct ParamStatementListGenerator<T, A...> {
-             static void call(std::ostringstream& ss, std::ostringstream& sp) {
+             static void call(std::ostringstream& ss, std::ostringstream& sp, const std::string& sep) {
                 auto var = getParamStatement<typename std::decay<T>::type>(sizeof...(A), "", ss);
-                sp << var;
-                if(sizeof...(A) > 0){
-                    sp << ", ";
-                    ParamStatementListGenerator<A...>::call(ss, sp);
-                }
+				sp << sep;
+				sp << var;
+                ParamStatementListGenerator<A...>::call(ss, sp, ", ");
              }
         };
 
         template<>
         struct ParamStatementListGenerator<> {
-             static void call(std::ostringstream& /*ss*/, std::ostringstream& /*sp*/) {
+             static void call(std::ostringstream& /*ss*/, std::ostringstream& /*sp*/, const std::string& /*sep*/) {
              }
         };
 
@@ -187,7 +188,7 @@ namespace s {
         static inline std::string getFunctionBody(const std::string& name){
             std::ostringstream ss;
             std::ostringstream sp;
-            ParamStatementListGenerator<A...>::call(ss, sp);
+            ParamStatementListGenerator<A...>::call(ss, sp, "");
 
             std::ostringstream os;
             os << "function(" << sp.str() << "){" << std::endl;
@@ -208,12 +209,14 @@ namespace s {
             typedef Res (Cls::*FnT)(Args...);
             static inline void afn_run(Cls fnx, conversion_context& ctx) {
                 size_t idx = 0;
-                auto rv = fnx(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
+				unused(idx);
+				auto rv = fnx(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
                 ctx.retv = convertor<typename std::decay<decltype(rv)>::type>::convertToJS(ctx, rv);
             }
             static inline void obj_run(Cls obj, FnT fn, conversion_context& ctx) {
                 size_t idx = 0;
-                auto rv = (obj.*fn)(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
+				unused(idx);
+				auto rv = (obj.*fn)(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
                 ctx.retv = convertor<typename std::decay<decltype(rv)>::type>::convertToJS(ctx, rv);
             }
         };
@@ -223,11 +226,14 @@ namespace s {
             typedef void (Cls::*FnT)(Args...);
             static inline void afn_run(Cls fnx, conversion_context& ctx) {
                 size_t idx = 0;
-                fnx(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
+				unused(ctx);
+				unused(idx);
+				fnx(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
             }
             static inline void obj_run(Cls obj, FnT fn, conversion_context& ctx) {
                 size_t idx = 0;
-                (obj.*fn)(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
+				unused(idx);
+				(obj.*fn)(convertor<typename std::decay<Args>::type>::convertParamFromJS(ctx, idx)...);
             }
         };
 
