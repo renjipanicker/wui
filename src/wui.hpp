@@ -527,60 +527,60 @@ namespace s {
             /// should always be called on main thread
             void eval(const std::string& str);
         };
-    } // wui
 
-    /////////////////////////////////////////////////////////////////////
-    /// \brief asset abstraction
-    class asset {
-    public:
-        /// \brief asset stream
-        class file {
-            struct Impl;
-            std::unique_ptr<Impl> impl_;
-        public:
-            file(const std::string& filename, std::ios_base::openmode mode = std::ios_base::in);
-            ~file();
-            int read(char* buf, const size_t& len);
-            void readAll(std::function<bool(const char*, const size_t&)>& fn);
-            bool valid() const;
-            inline operator bool() const {
-                return valid();
-            }
-        };
+		/////////////////////////////////////////////////////////////////////
+		/// \brief asset abstraction
+		class asset {
+		public:
+			/// \brief asset stream
+			class file {
+				struct Impl;
+				std::unique_ptr<Impl> impl_;
+			public:
+				file(const std::string& filename, std::ios_base::openmode mode = std::ios_base::in);
+				~file();
+				int read(char* buf, const size_t& len);
+				void readAll(std::function<bool(const char*, const size_t&)>& fn);
+				bool valid() const;
+				inline operator bool() const {
+					return valid();
+				}
+			};
 
-        /// \brief list assets in src/
-        static std::vector<std::string> listFiles(const std::string& src);
+			/// \brief list assets in src/
+			static std::vector<std::string> listFiles(const std::string& src);
 
-        /// \brief read file
-        static void readFile(const std::string& filename, std::function<bool(const char*, const size_t&)> fn);
-    }; // asset
+			/// \brief read file
+			static void readFile(const std::string& filename, std::function<bool(const char*, const size_t&)> fn);
+		}; // asset
 
-    /////////////////////////////////////////////////////////////////////
-    /// \brief application main loop, instance checker, etc
-    class application {
-    public:
-        class Impl;
+		/////////////////////////////////////////////////////////////////////
+		/// \brief application main loop, instance checker, etc
+		class application {
+		public:
+			class Impl;
 
-    private:
-        std::unique_ptr<Impl> impl_;
+		private:
+			std::unique_ptr<Impl> impl_;
 
-    public:
-        std::string path;
-        std::string name;
-        int argc;
-        const char** argv;
-        const std::string title;
+		public:
+			std::string path;
+			std::string name;
+			int argc;
+			const char** argv;
+			const std::string title;
 
-    public:
-        std::function<void()> onInit;
+		public:
+			std::function<void()> onInit;
 
-    public:
-        application(int argc, const char** argv, const std::string& title);
-        ~application();
-        int loop();
-        void exit(const int& exitcode) const;
-        std::string datadir(const std::string& an) const;
-    };
+		public:
+			application(int argc, const char** argv, const std::string& title);
+			~application();
+			int loop();
+			void exit(const int& exitcode) const;
+			std::string datadir(const std::string& an) const;
+		};
 
-    const s::application& app();
+		const s::wui::application& app();
+	} // wui
 } // s

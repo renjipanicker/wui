@@ -116,7 +116,7 @@ namespace {
                 }
             }else if(type == s::wui::ContentSourceType::Resource){
 #ifdef WUI_WIN
-                url = "res://" + s::app().name + "/" + url;
+                url = "res://" + s::wui::app().name + "/" + url;
 #endif
 #ifdef WUI_OSX
                 auto rpath = [[NSBundle mainBundle] resourcePath];
@@ -317,6 +317,7 @@ inline s::wui::window::Impl& s::wui::window::impl() {
 }
 
 - (BOOL)wantsScrollEventsForSwipeTrackingOnAxis:(NSEventGestureAxis)axis {
+    s::js::unused(axis);
     return YES;
 }
 
@@ -327,24 +328,6 @@ inline s::wui::window::Impl& s::wui::window::impl() {
 
     if (x != 0) {
         (x > 0) ? [self goBack:self] : [self goForward:self];
-    }
-}
-
-@end
-
-/////////////////////////////////
-@interface WuiSecondaryView : WebView {
-@public
-    NSWindow* win_;
-}
-@end
-
-/////////////////////////////////
-@implementation WuiSecondaryView
-- (void)keyDown: (NSEvent *) event {
-//    NSLog(@"keyDown %d called!", [event keyCode]);
-    if ([event keyCode] == 53){ //For escape key
-        [win_ orderOut:win_];
     }
 }
 
@@ -415,10 +398,10 @@ static const char * const qBlockActionKey = "BlockActionKey";
 @end
 
 /////////////////////////////////
-class s::application::Impl {
-    s::application& app_;
+class s::wui::application::Impl {
+    s::wui::application& app_;
 public:
-    inline Impl(s::application& a) : app_(a) {
+    inline Impl(s::wui::application& a) : app_(a) {
         s::js::unused(app_);
     }
 
@@ -462,8 +445,6 @@ public:
 
 /////////////////////////////////
 struct s::wui::window::Impl {
-    WuiSecondaryView* webView2;
-    NSWindow* window2;
 private:
     s::wui::window& wb;
     NSWindow* window;
@@ -471,7 +452,7 @@ private:
     AppDelegate* wd;
     ContentSourceData csd;
 public:
-    inline Impl(s::wui::window& w) : wb(w), window(nullptr), webView(nullptr), webView2(nullptr), wd(nullptr) {
+    inline Impl(s::wui::window& w) : wb(w), window(nullptr), webView(nullptr), wd(nullptr) {
     }
 
     inline void setContentSourceEmbedded(const std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>>& lst) {
@@ -628,25 +609,6 @@ public:
         [webView setResourceLoadDelegate : wd];
         [webView setPolicyDelegate : wd];
 
-        // create secondary window
-        window2 = [[NSWindow alloc]
-                  initWithContentRect:frame
-                  styleMask : NSTitledWindowMask | NSResizableWindowMask
-                  backing : NSBackingStoreBuffered
-                  defer : NO];
-        [window2 setLevel:NSMainMenuWindowLevel + 1];
-//        [window2 setPreferredBackingLocation:NSWindowBackingLocationVideoMemory];
-
-        webView2 = [[WuiSecondaryView alloc] initWithFrame:frame frameName : @"myWV2" groupName : @"webViews"];
-        [webView2 setUIDelegate : wd];
-
-        [webView2 setFrameLoadDelegate : wd];
-        [webView2 setResourceLoadDelegate : wd];
-        [webView2 setPolicyDelegate : wd];
-
-        webView2->win_ = window2;
-        [window2 setContentView : webView2];
-
         // set webView as content of top-level window
         assert(window != nullptr);
         [window setContentView : webView];
@@ -762,8 +724,8 @@ public:
     }
 
     // call callback
-    if(s::app().onInit){
-        s::app().onInit();
+    if(s::wui::app().onInit){
+        s::wui::app().onInit();
     }
 
     assert(wb_);
@@ -772,34 +734,15 @@ public:
     }
 }
 
-- (WebView *)webView:(WuiBrowserView *)sender createWebViewWithRequest:(NSURLRequest *)request {
-//    NSLog(@"createWebViewWithRequest: %@, %@", request, [[request URL] absoluteString]);
-    s::js::unused(sender);
-    s::js::unused(request);
-    wv_ = wb_->impl().webView2;
-    return wv_;
-}
-
-- (void)webViewShow:(WebView *)sender {
-//    NSLog(@"webViewShow");
-    s::js::unused(sender);
-    [wb_->impl().window2 makeKeyAndOrderFront:wb_->impl().window2];
-}
-
 -(BOOL)applicationShouldTerminateAfterLastWindowClosed : (NSApplication *)theApplication {
     s::js::unused(theApplication);
     return YES;
 }
 
-//- (void)webView:(WebView *)sender willPerformClientRedirectToURL:(NSURL *)URL delay:(NSTimeInterval)seconds fireDate:(NSDate *)date forFrame:(WebFrame *)frame {
-//    NSLog(@"willPerformClientRedirectToURL: %@", [URL absoluteString]);
-//}
-
-//- (void)webView:(WebView *)webView didReceiveServerRedirectForProvisionalLoadForFrame:(WebFrame *)frame {
-//    NSLog(@"%@",[[[[frame provisionalDataSource] request] URL] absoluteString]);
-//}
-
 - (void)webView:(WebView *)webView decidePolicyForNavigationAction:(NSDictionary *)actionInformation request:(NSURLRequest *)request frame:(WebFrame *)frame decisionListener:(id)listener {
+    s::js::unused(webView);
+    s::js::unused(actionInformation);
+    s::js::unused(frame);
     NSString *urlString = [[request URL] absoluteString];
     //NSLog(@"decidePolicyForNavigationAction: %@", urlString);
     if (wb_->onNavigating) {
@@ -1239,7 +1182,7 @@ struct s::wui::window::Impl
             flags |= WS_CHILDWINDOW;
         }
 
-        std::wstring title(convertor.from_bytes(s::app().title));
+        std::wstring title(convertor.from_bytes(s::wui::app().title));
 
         RECT rc;
         ::SystemParametersInfo(SPI_GETWORKAREA, 0, (void*)&rc, 0);
@@ -1891,10 +1834,10 @@ struct s::wui::window::Impl
 
 std::vector<s::wui::window::Impl*> s::wui::window::Impl::wlist;
 
-class s::application::Impl{
-    s::application& app;
+class s::wui::application::Impl{
+    s::wui::application& app;
 public:
-    inline Impl(s::application& a) : app(a){
+    inline Impl(s::wui::application& a) : app(a){
         ::_tzset();
         if(::OleInitialize(NULL) != S_OK){
             throw s::wui::exception(std::string("OleInitialize() failed:") + GetLastErrorAsString());
@@ -1921,8 +1864,8 @@ public:
     }
 
     inline int loop(){
-        if(s::app().onInit){
-            s::app().onInit();
+        if(s::wui::app().onInit){
+            s::wui::app().onInit();
         }
 
         //auto hInstance = ::GetModuleHandle(NULL);
@@ -1984,7 +1927,7 @@ namespace {
     static ::jmethodID _s_setObjectFn = 0;
     static ::jmethodID _s_goEmbeddedFn = 0;
     static ::jmethodID _s_goStandardFn = 0;
-    static s::application::Impl* _s_impl = nullptr;
+    static s::wui::application::Impl* _s_impl = nullptr;
     static s::wui::window::Impl* _s_wimpl = nullptr;
 
     struct JniEnvGuard {
@@ -2138,14 +2081,14 @@ public:
     }
 };
 
-class s::application::Impl {
-    s::application& app;
+class s::wui::application::Impl {
+    s::wui::application& app;
     bool done;
     std::condition_variable cv_;
     std::mutex mxq_;
     std::queue<std::function<void()>> mq_;
 public:
-    inline Impl(s::application& a) : app(a), done(false) {
+    inline Impl(s::wui::application& a) : app(a), done(false) {
         assert(_s_impl == nullptr);
         _s_impl = this;
     }
@@ -2261,8 +2204,8 @@ extern "C" {
     JNIEXPORT void JNICALL Java_com_renjipanicker_wui_initWindow(JNIEnv* env, jobject activity) {
         if(_s_impl != nullptr){
             _s_impl->post([](){
-                if(s::app().onInit){
-                    s::app().onInit();
+                if(s::wui::app().onInit){
+                    s::wui::app().onInit();
                 }
             });
         }
@@ -2365,10 +2308,10 @@ public:
     }
 };
 
-class s::application::Impl {
-    s::application& app;
+class s::wui::application::Impl {
+    s::wui::application& app;
 public:
-    inline Impl(s::application& a) : app(a) {
+    inline Impl(s::wui::application& a) : app(a) {
     }
     inline ~Impl() {
     }
@@ -2424,7 +2367,7 @@ void s::wui::window::addNativeObject(s::js::objectbase& jo, const std::string& b
 }
 
 ////////////////////////////
-std::vector<std::string> s::asset::listFiles(const std::string& src) {
+std::vector<std::string> s::wui::asset::listFiles(const std::string& src) {
 #if defined(WUI_NDK)
     struct dir{
         JniEnvGuard envg;
@@ -2457,7 +2400,7 @@ std::vector<std::string> s::asset::listFiles(const std::string& src) {
     return rv;
 }
 
-void s::asset::readFile(const std::string& filename, std::function<bool(const char*, const size_t&)> fn) {
+void s::wui::asset::readFile(const std::string& filename, std::function<bool(const char*, const size_t&)> fn) {
 #if defined(WUI_NDK)
     file onx(filename);
     if(!onx){
@@ -2471,7 +2414,7 @@ void s::asset::readFile(const std::string& filename, std::function<bool(const ch
 }
 
 #if defined(WUI_NDK)
-struct s::asset::file::Impl {
+struct s::wui::asset::file::Impl {
     JniEnvGuard envg;
     AAssetManager* mgr;
     AAsset* asset;
@@ -2501,11 +2444,11 @@ struct s::asset::file::Impl {
     }
 };
 #else
-struct s::asset::file::Impl {
+struct s::wui::asset::file::Impl {
 };
 #endif
 
-s::asset::file::file(const std::string& filename, std::ios_base::openmode) {
+s::wui::asset::file::file(const std::string& filename, std::ios_base::openmode) {
 #if defined(WUI_NDK)
     impl_ = std::make_unique<Impl>(filename);
 #else
@@ -2513,10 +2456,10 @@ s::asset::file::file(const std::string& filename, std::ios_base::openmode) {
 #endif
 }
 
-s::asset::file::~file() {
+s::wui::asset::file::~file() {
 }
 
-int s::asset::file::read(char* buf, const size_t& len) {
+int s::wui::asset::file::read(char* buf, const size_t& len) {
 #if defined(WUI_NDK)
     return impl_->read(buf, len);
 #else
@@ -2526,7 +2469,7 @@ int s::asset::file::read(char* buf, const size_t& len) {
 #endif
 }
 
-void s::asset::file::readAll(std::function<bool(const char*, const size_t&)>& fn) {
+void s::wui::asset::file::readAll(std::function<bool(const char*, const size_t&)>& fn) {
 #if defined(WUI_NDK)
     return impl_->readAll(fn);
 #else
@@ -2534,7 +2477,7 @@ void s::asset::file::readAll(std::function<bool(const char*, const size_t&)>& fn
 #endif
 }
 
-bool s::asset::file::valid() const {
+bool s::wui::asset::file::valid() const {
 #if defined(WUI_NDK)
     return impl_->valid();
 #else
@@ -2544,30 +2487,30 @@ bool s::asset::file::valid() const {
 
 ////////////////////////////
 namespace {
-    s::application* s_app = nullptr;
+    s::wui::application* s_app = nullptr;
 }
-s::application::application(int c, const char** v, const std::string& t) : argc(c), argv(v), title(t) {
+s::wui::application::application(int c, const char** v, const std::string& t) : argc(c), argv(v), title(t) {
     assert(s_app == nullptr);
     s_app = this;
     impl_ = std::make_unique<Impl>(*this);
 }
 
-s::application::~application() {
+s::wui::application::~application() {
     s_app = nullptr;
 }
 
-int s::application::loop() {
+int s::wui::application::loop() {
     return impl_->loop();
 }
 
-void s::application::exit(const int& exitcode) const {
+void s::wui::application::exit(const int& exitcode) const {
     return impl_->exit(exitcode);
 }
 
-std::string s::application::datadir(const std::string& an) const {
+std::string s::wui::application::datadir(const std::string& an) const {
     return impl_->datadir(an);
 }
 
-const s::application& s::app() {
+const s::wui::application& s::wui::app() {
     return *s_app;
 }
