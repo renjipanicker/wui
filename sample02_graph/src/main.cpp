@@ -14,7 +14,7 @@ struct node {
     }
 };
 
-void refresh(const std::string& txt);
+//void refresh(const std::string& txt);
 
 auto jnode = s::js::klass<node>("NodeT")
             .property("x", &node::x)
@@ -26,7 +26,7 @@ auto jnode = s::js::klass<node>("NodeT")
 
 ////
 int main(int argc, const char* argv[]){
-    s::application app(argc, argv, "Graph");
+    s::wui::application app(argc, argv, "Graph");
     s::wui::window w;
 
     // open window
@@ -34,7 +34,7 @@ int main(int argc, const char* argv[]){
         std::cout << "app::onInit" << std::endl;
         w.setContentSourceEmbedded(html);
         std::cout << "Opening window" << std::endl;
-        if (!w.open()) {
+        if (!w.open(-500, 0, -1, -1)) {
             std::cout << "unable to open window" << std::endl;
             return;
         }
@@ -50,7 +50,7 @@ int main(int argc, const char* argv[]){
     // exit app on close
     w.onClose = []() {
         std::cout << "w::onClose" << std::endl;
-        s::app().exit(0);
+        s::wui::app().exit(0);
     };
 
     node tnode1;
@@ -61,7 +61,7 @@ int main(int argc, const char* argv[]){
 
         // add node class
         w.addClass(jnode);
-        w.setObject(jnode, "tnode1", tnode1);
+        //w.setObject(jnode, "tnode1", tnode1);
 
         // add console object with console.log() function
         auto& console = w.newObject("console");
@@ -70,11 +70,6 @@ int main(int argc, const char* argv[]){
             return 1;
         };
         w.addObject(console);
-    };
-
-    // save file
-    w.onSaveFile = []() {
-        std::cout << "w::onSaveFile" << std::endl;
     };
 
     std::cout << "Starting loop" << std::endl;

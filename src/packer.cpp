@@ -22,33 +22,29 @@ std::map<std::string, MimeType> mimetypeMap = {
    ,{"png", {"image/png", true}}
 };
 
-void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, std::ostream& fmap, const std::string& ifname, const std::string& vpfx){
-    std::cout << "-Processing:" << ifname << std::endl;
-    std::string fname;
+void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, std::ostream& fmap, const std::string& ofname, const std::string& rpath, const std::string& rfname){
+    auto ifname = rpath + rfname;
+    std::cout << "-Processing:" << ifname << ":" << ofname << std::endl;
     std::string vname;
     std::string ext;
-    for(auto& ch : ifname){
+    for(auto& ch : rfname){
         switch(ch){
             case '/':
             case ':':
             case '\\':
                 ext = "";
-                fname = "";
                 vname += "_";
                 break;
             case '.':
                 ext = "";
-                fname += ch;
                 vname += "_";
                 break;
             case '-':
                 ext += ch;
-                fname += ch;
                 vname += "_";
                 break;
             default:
                 ext += ch;
-                fname += ch;
                 vname += ch;
                 break;
         }
@@ -66,6 +62,10 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
     size_t tlen = 0;
     unsigned char buf[17];
     std::ifstream ifs(ifname, std::ios::binary);
+    if (!ifs.is_open()) {
+        std::cout << "Unable to open file:" << ifname << std::endl;
+        exit(1);
+    }
     std::string s;
     while(!ifs.eof()) {
         ifs.read((char*)buf, 16);
@@ -114,25 +114,10 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
             }
 
             x = 0;
-            bool inStar = false;
             ofsrc << "/* ";
             for (auto& ch : s) {
-                if (isprint(ch)) {
-                    if (inStar) {
-                        if (ch == '/') {
-                            ofsrc << ' ';
-                        }
-                        else {
-                            ofsrc << ch;
-                        }
-                        inStar = false;
-                    }
-                    else if (ch == '*') {
-                        inStar = true;
-                    }
-                    else {
-                        ofsrc << ch;
-                    }
+                if (isprint(ch) && (ch != '/') && (ch != '*')) {
+                    ofsrc << ch;
                 }
                 else {
                     ofsrc << ' ';
@@ -160,15 +145,14 @@ void processFile(std::ostream& ofhdr, std::ostream& ofsrc, std::ostream& vmap, s
     ofsrc << "0" << std::endl;
     ofsrc << "};" << std::endl;
 
-    vmap << "std::tuple<const unsigned char*, size_t, std::string, bool> " << vname << "Tuple {" << vname << ", " << tlen << ", \"" << mimetype << "\", " << isBinary << "};" << std::endl;
-    fmap << "{\"" << vpfx << fname << "\", " << vname << "Tuple}" << std::endl;
+    vmap << "std::tuple<const unsigned char*, size_t, std::string, bool> " << vname << "_Tuple {" << vname << ", " << tlen << ", \"" << mimetype << "\", " << isBinary << "};" << std::endl;
+    fmap << "{\"" << ofname << "\", " << vname << "_Tuple}" << std::endl;
 }
 
 int main(int argc, const char* argv[]){
     std::string ofdir;
     std::string ofname;
-    std::string vpfx;
-    std::vector<std::string> ifnameList;
+    std::string resfile;
 
     bool showHelp = true;
     if(argc > 1){
@@ -176,34 +160,38 @@ int main(int argc, const char* argv[]){
             auto args = std::string(argv[i]);
             if(args == "-v"){
                 if(i >= (argc-1)){
-                    std::cout << "Invalid arguments" << std::endl;
+                    std::cout << "Invalid variable name" << std::endl;
                     break;
                 }
                 ++i;
                 ofname = argv[i];
             }else if(args == "-d"){
                 if(i >= (argc-1)){
-                    std::cout << "Invalid directory" << std::endl;
+                    std::cout << "Invalid output directory" << std::endl;
                     break;
                 }
                 ++i;
                 ofdir = argv[i];
-            }else if(args == "-p"){
-                if(i >= (argc-1)){
-                    std::cout << "Invalid prefix" << std::endl;
-                    break;
-                }
-                ++i;
-                vpfx = argv[i];
             }else{
-                ifnameList.push_back(args);
+                resfile = args;
             }
         }
         showHelp = false;
     }
     if(showHelp){
-        std::cout << argv[0] << "-d <outputdir> -v <varname> <infile-list>" << std::endl;
+        std::cout << argv[0] << " -d <outputdir> -v <filename> <resfile>" << std::endl;
         return 0;
+    }
+
+    std::string rpath;
+    auto rpos = resfile.find_last_of("/\\");
+    if (rpos != std::string::npos) {
+        rpath = resfile.substr(0, rpos) + "/";
+    }
+    std::ifstream rfs(resfile);
+    if (!rfs) {
+        std::cout << "unable to open resource file:" << resfile << std::endl;
+        return 1;
     }
 
     auto ofhdrname = ofdir + "/" + ofname + ".hpp";
@@ -229,10 +217,15 @@ int main(int argc, const char* argv[]){
     ofhdr << "extern std::map<std::string, std::tuple<const unsigned char*, size_t, std::string, bool>> " << ofname << ";" << std::endl;
     ofsrc << "#include \"" << ofname << ".hpp\"" << std::endl;
     ofsrc << "namespace {" << std::endl;
-    for(auto& ifname : ifnameList){
-        fmap << sep;
-        processFile(ofhdr, ofsrc, vmap, fmap, ifname, vpfx);
-        sep = ", ";
+    while (!rfs.eof()) {
+        std::string ofname;
+        std::string ifname;
+        rfs >> std::quoted(ofname) >> std::quoted(ifname);
+        if ((ofname.length() > 0) && (ifname.length() > 0)) {
+            fmap << sep;
+            processFile(ofhdr, ofsrc, vmap, fmap, ofname, rpath, ifname);
+            sep = ", ";
+        }
     }
     ofsrc << "} // namespace" << std::endl;
     ofsrc << std::endl;
