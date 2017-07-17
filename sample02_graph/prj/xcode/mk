@@ -9,14 +9,12 @@ echo root is:$ROOT
 
 mkdir -p $BLD
 
-clang++ -std=c++11 -o $BLD/packer $SRC/packer.cpp
+clang++ -std=c++14 -o $BLD/packer $SRC/packer.cpp
 if [ $? -ne 0 ]; then
     exit 1
 fi
 
-$BLD/packer -d $BLD -v html -p html/ \
-    $DEMO/src/d3.min.js \
-    $DEMO/src/index.html
+$BLD/packer -d $BLD -v html $DEMO/src/html.def
 
 if [ $? -ne 0 ]; then
     exit 1
