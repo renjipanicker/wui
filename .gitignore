@@ -13,6 +13,13 @@ sample02_graph/prj/android/gen/
 sample02_graph/prj/android/libs/
 sample02_graph/prj/android/obj/
 
+sample01_jquery/prj/msvc/sample01_jquery/.vs/
+sample01_jquery/prj/msvc/sample01_jquery/Debug/
+sample01_jquery/prj/msvc/sample01_jquery/Release/
+sample02_graph/prj/msvc/sample02_graph/.vs/
+sample02_graph/prj/msvc/sample02_graph/Debug/
+sample02_graph/prj/msvc/sample02_graph/Release/
+
 packer.osx
 packer.exe
 packer.obj
